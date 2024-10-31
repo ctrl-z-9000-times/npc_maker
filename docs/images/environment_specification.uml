@@ -1,0 +1,35 @@
+@startjson
+{
+    "name": "String",
+    "description": "String",
+    "spec": "String",
+    "path": "String",
+    "populations": [
+        {
+            "name": "String",
+            "description": "String",
+            "interfaces": [
+                {
+                    "gin": "Number",
+                    "name": "String",
+                    "description": "String",
+                    "Unspecified": "Any"
+                }
+            ],
+            "Unspecified": "Any"
+        }
+    ],
+    "settings": [
+        {
+            "name": "String",
+            "description":  "String",
+            "type": "String",
+            "default": "Value",
+            "minimum": "Number",
+            "maximum": "Number",
+            "values": ["List", "of", "Strings"]
+        }
+    ],
+    "Unspecified": "Any"
+}
+@endjson
