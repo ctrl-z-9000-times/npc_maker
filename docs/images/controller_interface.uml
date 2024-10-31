@@ -1,0 +1,90 @@
+@startuml
+skinparam componentStyle rectangle
+
+frame "The Environment Process" as env_proc {
+
+  component instance <<class>> [
+    **npc_maker.ctrl.Controller**
+
+    .. // constructor arguments // ..
+    * environment specification
+    * population name
+    * controller command
+    * stderr
+    
+    .. // methods // ..
+    * new(genome)
+    * reset()
+    * advance(dt)
+    * set_input(gin, value)
+    * set_binary(gin, bytes)
+    * get_outputs(gin_list) -> values
+    * save(path)
+    * load(path)
+    * message(type, message)
+    * quit()
+  ]
+
+  component env_stderr <<file descriptor>> [stderr
+  ]
+
+  instance -[hidden]- env_stderr
+}
+
+() stdin
+() stdout
+() stderr
+stdin -[hidden]- stdout
+stdout -[hidden]- stderr
+
+frame "The Controller Sub-Process" as ctrl_proc {
+
+  component main <<file>> [
+    **main.py**
+    
+    1| env_spec, pop = npc_maker.ctrl.get_args()
+    2| controller = MyController()
+    3| npc_maker.ctrl.main_loop(controller)
+  ]
+
+  component main_loop <<functions>> [
+    
+    * npc_maker.ctrl.main_loop(controller)
+  ]
+
+  component API <<abstract class>> [
+    **npc_maker.ctrl.API**
+    
+    .. // abstract methods // ..
+    * new(genome)
+    * reset()
+    * advance(dt)
+    * set_input(gin, value)
+    * set_binary(gin, bytes)
+    * get_output(gin) -> value
+    * save(path)
+    * load(path)
+    * message(type, message)
+    * quit()
+  ]
+
+  component eprint <<functions>> [
+    
+    * npc_maker.ctrl.eprint(message)
+  ]
+
+  main --> main_loop : calls
+  main_loop --> API : controller\nimplements
+  main_loop -[hidden]- API
+  main_loop -[hidden]- eprint
+}
+
+instance  -> main : constructor spawns subprocess
+instance  -> stdin
+stdin     -> main_loop
+main_loop -> stdout
+stdout    -> instance
+eprint    -> stderr
+stderr    -> env_stderr : inherits by default
+
+@enduml

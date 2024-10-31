@@ -1,0 +1,54 @@
+<mujoco model="cart-pole">
+
+  <option timestep="0.01" integrator="RK4"
+          gravity="0 0 -9.81" wind="0 0 0"
+          density="1.2" viscosity="0.00002">
+    <flag contact="disable" energy="enable"/>
+  </option>
+
+  <asset>
+      <material name="wood"/>
+
+      <texture name="skybox" type="skybox" builtin="gradient" rgb1=".4 .6 .8" rgb2="0 0 0"
+               width="1600" height="1600" mark="random" markrgb="1 1 1"/>
+
+      <material name="rail" />
+  </asset>
+
+  <visual>
+    <headlight />
+    <rgba />
+  </visual>
+
+  <default>
+    <default class="pole_1">
+      <joint type="hinge" axis="0 1 0"  damping="2e-6" />
+      <geom type="capsule" fromto="0 0 0 0 0 1" size="0.045" mass="1" material="wood" />
+    </default>
+  </default>
+
+  <worldbody>
+    <camera name="fixed" pos="0 -5 3" zaxis="0 -1 0" />
+    <light name="light" pos="0 0 6" />
+    <geom name="floor" pos="0 0 -.05" size="3.5 3.5 .2" type="plane" />
+    <geom name="rail_1" type="box" pos="0  .11 .85" size="3 0.02 0.05" material="rail" />
+    <geom name="rail_2" type="box" pos="0 -.11 .85" size="3 0.02 0.05" material="rail" />
+
+    <body name="cart" pos="0 0 1">
+      <joint name="slider" type="slide" limited="true" axis="1 0 0" range="-2.4 2.4" solreflimit=".08 1" damping="5e-4" />
+      <geom name="cart" type="box" size="0.2 0.15 0.1" mass=".001" />
+      <body name="pole_1" childclass="pole_1">
+        <joint name="hinge_1" />
+        <geom name="pole_1" />
+      </body>
+    </body>
+  </worldbody>
+
+  <sensor>
+    <jointpos name="slider" joint="slider" />
+    <jointpos name="hinge_1" joint="hinge_1" />
+  </sensor>
+  <actuator>
+    <motor name="slide" joint="slider" gear="10" ctrllimited="true" ctrlrange="-1 1" />
+  </actuator>
+</mujoco>

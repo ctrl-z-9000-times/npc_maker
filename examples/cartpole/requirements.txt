@@ -1,0 +1,3 @@
+npc_maker
+numpy
+mujoco>=3.1

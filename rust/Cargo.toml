@@ -1,0 +1,15 @@
+[package]
+    name = "npc_maker"
+    version = "0.1.0"
+    edition = "2021"
+    rust-version = "1.79"
+    license = "MIT-0"
+
+[lib]
+    doctest = false
+
+[dependencies]
+    libc       = { version = "*" }
+    serde      = { version = "1", features = ["derive", "rc"] }
+    serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+    thiserror  = { version = "*" }

@@ -1,0 +1,20 @@
+[package]
+    name = "xor"
+    version = "0.1.0"
+    edition = "2021"
+    rust-version = "1.79"
+    description = "Exclusive-Or test environment for the NPC Maker"
+    keywords = ["npc-maker", "environment"]
+    authors.workspace = true
+    repository.workspace = true
+    homepage.workspace = true
+
+[[bin]]
+    name = "xor"
+    path = "xor.rs"
+
+[dependencies]
+    ctrl_api   = { path = "../../crates/ctrl_api/" }
+    env_api    = { path = "../../crates/env_api/" }
+    serde      = { workspace = true }
+    serde_json = { workspace = true }
