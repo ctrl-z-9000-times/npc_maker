@@ -1,0 +1,35 @@
+@startjson
+{
+    "name": "String",
+    "description": "Optional String",
+    "spec": "Automatic String",
+    "path": ["List", "of", "Strings"],
+    "populations": [
+        {
+            "name": "String",
+            "description": "Optional String",
+            "interfaces": [
+                {
+                    "gin": "Number",
+                    "name": "String",
+                    "description": "Optional String",
+                    "user defined": "..."
+                }
+            ],
+            "user defined": "..."
+        }
+    ],
+    "settings": [
+        {
+            "name": "String",
+            "description":  "Optional String",
+            "type": "String",
+            "default": "Value",
+            "minimum": "Number",
+            "maximum": "Number",
+            "values": ["List", "of", "Strings"]
+        }
+    ],
+    "user defined": "..."
+}
+@endjson

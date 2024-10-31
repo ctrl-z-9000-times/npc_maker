@@ -1,0 +1,108 @@
+@startuml
+skinparam componentStyle rectangle
+
+frame "The Management Process" as mgmt_proc {
+
+  component instance [
+    npc_maker.env.Environment(evo, env, mode, settings, stderr, timeout)
+    
+    * start()
+    * stop()
+    * pause()
+    * resume()
+    * save(path)
+    * load(path)
+    * send(message)
+    * quit()
+    * flush()
+    * poll()
+  ]
+
+  component evo [
+    npc_maker.evo.Evolution
+    
+    * controller() -> cmd
+    * birth(parents) -> [genome, info]
+    * death(individual)
+  ]
+
+  component mgmt_stderr [
+    stderr
+  ]
+
+  instance --> evo : calls
+
+  evo -[hidden]- mgmt_stderr
+}
+
+together {
+  () stdin
+  () stdout
+  () stderr
+  stdin -[hidden]- stdout
+  stdout -[hidden]- stderr
+}
+
+frame "The Environment Sub-Process" as env_proc {
+
+  component main [
+    main.py
+    
+    1| npc_maker.env.get_args()
+    2| while True:
+    3|     message = npc_maker.env.poll()
+  ]
+
+  component poll [
+    npc_maker.env.poll()
+  ]
+
+  component poll_results [
+    * None
+    * "Start"
+    * "Stop"
+    * "Pause"
+    * "Resume"
+    * "Heartbeat"
+    * "Quit"
+    * {"Save":"PATH"}
+    * {"Load":"PATH"}
+    * {"Message":JSON}
+    * {"Birth":{
+          "population":"POPULATION",
+          "name":UUID,
+          "controller":["COMMAND"],
+          "genome":GENOME,
+          "parents":[UUID]
+      }}
+  ]
+
+  component env_api [
+    npc_maker.env.ack()
+    npc_maker.env.info()
+    npc_maker.env.score()
+    npc_maker.env.death()
+  ]
+
+  component eprint [
+    npc_maker.env.eprint()
+  ]
+
+  main --> poll : calls
+  poll -> poll_results : returns one of
+  main --> env_api : calls
+
+  poll -[hidden]- env_api
+  env_api -[hidden]- eprint
+}
+
+' Connections between the two processes
+instance  -r> main : spawns subprocess
+instance  -r> stdin
+stdin     -r> poll
+env_api   -l> stdout
+stdout    -l> instance
+eprint    -l> stderr
+stderr    -l> mgmt_stderr : inherits by default
+
+@enduml

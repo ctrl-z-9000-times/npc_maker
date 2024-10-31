@@ -1,0 +1,19 @@
+@startuml
+left to right direction
+
+title Environments May Contain\nMultiple Populations
+
+[Evolution\nService 1] as evo1
+[Evolution\nService 2] as evo2
+[Environment] as env
+[AI Agent 1] as ctrl1
+[AI Agent 2] as ctrl2
+[Management\nProgram] as mgmt
+
+mgmt - env
+evo1 -- env
+evo2 -- env
+env -- ctrl1
+env -- ctrl2
+
+@enduml
