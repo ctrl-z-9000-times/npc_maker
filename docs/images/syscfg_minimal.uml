@@ -1,0 +1,15 @@
+@startuml
+left to right direction
+
+title Minimal System Configuration
+
+[Management\nProgram] as mgmt
+[Evolution\nService] as evo
+[Environment] as env
+[Controller] as ctrl
+
+mgmt - env
+evo -- env
+env -- ctrl
+
+@enduml
