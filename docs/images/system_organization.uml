@@ -1,0 +1,15 @@
+@startuml
+left to right direction
+
+title The NPC Maker\nSystem Organization
+
+[Management\nProgram] as mgmt
+[Evolutionary\nAlgorithm] as evo
+[Environment] as env
+[AI Agent] as ctrl
+
+mgmt -- env
+evo -- env
+env -- ctrl
+
+@enduml

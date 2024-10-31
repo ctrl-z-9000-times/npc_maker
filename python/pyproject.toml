@@ -1,0 +1,24 @@
+[project]
+    name = "npc-maker"
+    version = "0.1.0"
+    requires-python = ">=3.12"
+    authors = [
+        { name = "David McDougall", email = "dam1784@rit.edu" },
+    ]
+    description = "The NPC Maker is a framework for interacting with simulated environments which contain AI agents"
+    classifiers = [
+        "License :: OSI Approved :: MIT No Attribution License (MIT-0)",
+        "Natural Language :: English",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Intended Audience :: Science/Research",
+        "Topic :: Scientific/Engineering :: Artificial Life",
+    ]
+
+[project.optional-dependencies]
+    evo_server = ["Flask"]
+    evo_client = ["requests"]
+
+[project.urls]
+    Repository = "https://github.com/ctrl-z-9000-times/npc_maker"
+    # Changelog = ""
