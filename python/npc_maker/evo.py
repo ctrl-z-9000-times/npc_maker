@@ -291,7 +291,7 @@ class API:
     Users should inherit from this class and implement its methods.
     Then pass an instance of the class to an environment.
     """
-    def birth(self, parents) -> 'Individual':
+    def birth(self, parents=[]) -> 'Individual':
         """
         Abstract Method
 
@@ -379,6 +379,9 @@ class Recorder(API):
         if self.leaderboard: self._load_leaderboard()
         # if self.hall_of_fame: self._load_hall_of_fame()
 
+    def get_service(self):
+        return self.service
+
     def get_path(self):
         return self._path
 
@@ -388,7 +391,7 @@ class Recorder(API):
     # def get_hall_of_fame_path(self):
     #     return self._path.joinpath("hall_of_fame")
 
-    def birth(self, parents):
+    def birth(self, parents=[]):
         """"""
         return self.service.birth(parents)
 
@@ -508,7 +511,7 @@ class Replayer(API):
         self._scan()
         return self._population
 
-    def birth(self, parents):
+    def birth(self, parents=[]):
         self._scan()
         if not self._buffer:
             indices = self._select.select(128, self._scores)
@@ -577,15 +580,17 @@ class Evolution(API):
         Argument seed is the initial genetic material to begin evolution from.
                  It can be either a JSON-encodable object,
                  or a function which returns a JSON encodable object.
+                 >>> def seed() -> genome
 
-        Argument mutate is an optional function for transforming the genome:
-                    f(genome) -> genome
+        Argument mutate is an optional function for transforming the genome.
                  It is called on every new individual before they are born.
                  This argument defaults to the identity function.
+                 >>> def mutate(genome) -> genome
 
         Argument crossover is an optional function for merging multiple parent
                  genomes into a child genome. If missing then this class can
                  only perform asexual reproduction.
+                 >> def crossover(parents) -> genome
 
         Argument allow_mating controls whether this class respects "Mate"
                  requests from the environment. If "allow_mating" is True and
@@ -628,12 +633,17 @@ class Evolution(API):
         self.ascension_counter = 0
         self.path.mkdir(parents=True, exist_ok=True)
         # 
-        if   population_type == "generation":   PopClass = _Population
-        elif population_type == "continuous":   PopClass = _Continuous
-        elif population_type == "maximizing":   PopClass = _Maximizing
+        self.population_type = str(population_type).strip().lower()
+        self.population_size = int(population_size)
+        self.elites          = int(elites)
+        self.select          = select
+        self.score           = score
+        if   self.population_type == "generation": PopClass = _Population
+        elif self.population_type == "continuous": PopClass = _Continuous
+        elif self.population_type == "maximizing": PopClass = _Maximizing
         else: raise ValueError("unrecognized population type")
         self._population = PopClass(
-            self.path, select, score, population_size, elites)
+            self.path, self.select, self.score, self.population_size, self.elites)
 
     def get_path(self):
         """
@@ -648,7 +658,7 @@ class Evolution(API):
         """
         return self.controller
 
-    def birth(self, parents):
+    def birth(self, parents=[]):
         """"""
         if self.allow_mating and len(parents):
             pass # Environment has already selected the parents.
@@ -684,6 +694,8 @@ class Evolution(API):
                 parents=len(parents))
 
     def _assign_ascension(self, individual):
+        # Replace the individual's name with its ascension number.
+        individual.name = None
         if individual.ascension is None:
             individual.ascension = self.ascension_counter
             self.ascension_counter += 1
@@ -705,6 +717,8 @@ class _Population:
     """
     Manages a population of individuals using regular generations.
     """
+    buffer_size = 128
+
     def __init__(self, path, select, score, size, elites):
         self.path   = Path(path)
         self.select = select
@@ -716,13 +730,14 @@ class _Population:
         assert self.elites >= 0
         self._scan()
 
-    EntryType = collections.namedtuple("Entry", ("score", "ascension", "path"))
+    # The sort order is important because heapify() does not accept a key function.
+    EntryType = collections.namedtuple("Entry", ("score", "neg_ascension", "path"))
 
     def Entry(self, individual) -> EntryType:
         """ Class Constructor """
         return self.EntryType(
-            individual.get_ascension(),
             individual.get_custom_score(self.score),
+            -individual.get_ascension(),
             individual.get_path())
 
     def _scan(self):
@@ -735,7 +750,7 @@ class _Population:
         self._scan_time = getmtime(self.path)
 
     def sort(self):
-        self.data.sort(key=lambda entry: entry.ascension)
+        self.data.sort(key=lambda entry: -entry.neg_ascension)
         self.data = collections.deque(self.data)
 
     @staticmethod
@@ -770,11 +785,14 @@ class _Population:
         # 
         scores = [x.score for x in self.data][:self.size]
         paths  = [x.path  for x in self.data][:self.size]
-        pairs  = self.select.pairs(128, scores)
+        pairs  = self.select.pairs(self.buffer_size, scores)
         self._buffer = [(paths[a], paths[b]) for a,b in pairs]
         return self._buffer.pop()
 
 class _Continuous(_Population):
+
+    buffer_size = 1
+
     def rollover(self):
         while len(self.data) > self.size:
             individual = self.data.popleft()
@@ -782,6 +800,9 @@ class _Continuous(_Population):
             self._buffer.clear()
 
 class _Maximizing(_Population):
+
+    buffer_size = 1
+
     def sort(self):
         heapq.heapify(self.data)
 
