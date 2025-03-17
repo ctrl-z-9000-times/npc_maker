@@ -861,6 +861,15 @@ class SoloAPI:
         """
         raise TypeError("abstract method called")
 
+    def idle(self):
+        """
+        Abstract Method, Optional
+
+        This is called periodically while the environment is Paused or Stopped.
+        Environments should refrain from computationally intensive workloads while idling.
+        """
+        pass
+
     def save(self, path):
         """
         Abstract Method
@@ -897,7 +906,7 @@ class SoloAPI:
         computer processes and communicate over the environment's standard I/O
         channels.
 
-        This method never returns!
+        This never returns!
 
         Example Usage:
         >>> if __name__ == "__main__":
@@ -911,27 +920,11 @@ class SoloAPI:
         controller = None
         queue = collections.deque()
         state = "Stop"
+
+        # Main Program Loop.
         while True:
-            # 
-            if controller is None and queue:
-                request    = queue.popleft()
-                name       = request["name"]
-                command    = request["controller"]
-                genome     = json.dumps(request["genome"])
-                if controller is None:
-                    controller = npc_maker.ctrl.Controller(env_spec, population, command)
-                if not controller.is_alive():
-                    return
-                controller.new(genome)
-            # 
-            if controller is not None:
-                final_score = self.advance(controller)
-                if final_score is not None:
-                    score(name, final_score)
-                    death(name)
-                    new(population)
-                    controller = None
-            # 
+
+            # Message Read Loop.
             while request := poll():
                 if request == "Start":
                     state = "Start"
@@ -974,3 +967,34 @@ class SoloAPI:
 
                 else:
                     eprint('Unrecognized request:', request)
+
+            if state == "Pause":
+                idle_fps = 30
+                time.sleep(1 / idle_fps) # Don't excessively busy loop.
+                self.idle()
+
+            else:
+                # Birth New Controller.
+                if controller is None and queue:
+                    request    = queue.popleft()
+                    name       = request["name"]
+                    command    = request["controller"]
+                    genome     = json.dumps(request["genome"])
+                    if controller is None:
+                        # TODO: Reuse controller instances if able.
+                        controller = npc_maker.ctrl.Controller(env_spec, population, command)
+                    if not controller.is_alive():
+                        return
+                    controller.new(genome)
+
+                # Advance Controller One Step.
+                if controller is not None:
+                    final_score = self.advance(name, controller)
+                    if final_score is not None:
+                        score(name, final_score)
+                        death(name)
+                        controller = None
+                        if state == "Start":
+                            new(population)
+                        elif state == "Stop" and not queue:
+                            ack("Stop")

@@ -67,7 +67,7 @@ class Individual:
         self.birth_date     = birth_date
         self.death_date     = death_date
         self.ascension      = ascension
-        self.extras         = {}
+        self.extras         = extras
         self.path           = None
 
     def get_environment(self):
@@ -681,8 +681,7 @@ class Evolution(API):
             genome = self.crossover(parents)
         else:
             # Asexual Reproduction, randomly select one of the parents to clone.
-            path = random.choice(parents)
-            genome = Individual.load(path).get_genome()
+            genome = copy.deepcopy(random.choice(parents).get_genome())
 
         # 
         if self.mutate is not None:

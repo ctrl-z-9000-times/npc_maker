@@ -27,7 +27,7 @@ def demo():
     """ Run the solution in a loop forever. """
     import itertools
     npc_maker.env.Environment.run(
-            {"cartpole": [itertools.cycle([solution])]}, env_spec)
+            {"cartpole": itertools.cycle([solution])}, env_spec)
 
 def test_solution():
     results = npc_maker.env.Environment.run({"cartpole": [solution]}, env_spec)
