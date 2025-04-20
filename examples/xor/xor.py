@@ -52,7 +52,7 @@ class XorTest(env.SoloAPI):
     def __init__(self, env_spec, mode, **settings):
         self.verbose = (mode == 'graphical')
 
-    def advance(self, controller):
+    def advance(self, name, controller):
         """
         Evaluate the given neural network on the XOR task.
         Returns a score in the range [0, 16] where higher is better.
