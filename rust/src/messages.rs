@@ -46,16 +46,20 @@ pub enum Request {
     /// Maker will be ignored.
     Quit,
 
-    /// This message contains a new individual and its genotype. The environment
+    /// This message contains a new individual and its genome. The environment
     /// should begin evaluating it immediately. This message is usually sent in
     /// response to a request for either a new individual or a mating of two
     /// individuals. This message does not need to be acknowledged.
     Birth {
         population: String,
-        individual: u64,
+        name: String,
         controller: Vec<String>,
-        genotype: serde_json::Value,
+        genome: serde_json::Value,
+        parents: Vec<String>,
     },
+
+    /// Send a user defined message to the environment.
+    Message(serde_json::Value),
 }
 
 /// Structure of all messages sent from the environment instances to the NPC Maker.
@@ -79,28 +83,27 @@ pub enum Response {
     /// Both individuals must still be alive and in the environment.
     Mate {
         #[serde(rename = "Mate")]
-        parents: Vec<u64>,
+        parents: [String; 2],
     },
 
     /// Report the score or reproductive fitness of an individual.
     Score {
         #[serde(rename = "Score")]
         score: f64,
-        individual: u64,
+        name: String,
     },
 
-    /// Associate some extra information with an individual. The data is kept
-    /// alongside the individual in perpetuity and is displayed to the user.
+    /// Associate some extra information with an individual.
     Info {
         #[serde(rename = "Info")]
         info: HashMap<String, String>,
-        individual: u64,
+        name: String,
     },
 
     /// Report the death of an individual.
     Death {
         #[serde(rename = "Death")]
-        individual: u64,
+        name: String,
     },
 }
 
@@ -121,83 +124,74 @@ mod tests {
             Request::Quit,
             Request::Birth {
                 population: "pop1".to_string(),
-                individual: 42,
+                name: "42".to_string(),
                 controller: vec![
                     "~/mycode/ashdji;f.exe".to_string(),
                     "".to_string(),
                     " ".to_string(),
                     ",.,<>.,.,.,><>,".to_string(),
                 ],
-                genotype: serde_json::json!([]),
+                genome: serde_json::json!([]),
+                parents: vec!["qewrty".to_string(), "".to_string()],
             },
             Request::Birth {
                 population: "pop1".to_string(),
-                individual: 43,
+                name: "43".to_string(),
                 controller: vec![],
-                genotype: serde_json::json!([{}, {}, {}]),
+                genome: serde_json::json!([{}, {}, {}]),
+                parents: vec![
+                    "5883654456843513551325647448544554151".to_string(),
+                    "43848588658686835437723784328734587934598859348954".to_string(),
+                ],
             },
         ];
         let mut info = HashMap::new();
         info.insert("my_key".to_string(), "my_value".to_string());
         let mut all_responses = vec![
-            Response::New { population: None },
             Response::New {
-                population: Some("my pop1".to_string()),
+                population: "".to_string(),
             },
             Response::New {
-                population: Some(" ".to_string()),
+                population: "my pop1".to_string(),
+            },
+            Response::New {
+                population: " ".to_string(),
             },
             Response::Mate {
-                population: None,
-                parent1: 5,
-                parent2: 7,
+                parents: ["5".to_string(), "7".to_string()],
             },
             Response::Mate {
-                population: Some("pop 3".to_string()),
-                parent1: 5,
-                parent2: 8,
+                parents: ["5".to_string(), "8".to_string()],
             },
             Response::Score {
-                population: None,
-                individual: Some(42),
+                name: "42".to_string(),
                 score: 42.2,
             },
             Response::Score {
-                population: Some("ends with a number 3".to_string()),
-                individual: Some(21),
+                name: "21".to_string(),
                 score: 7.7,
             },
             Response::Info {
-                population: None,
-                individual: Some(101),
+                name: "101".to_string(),
                 info: HashMap::new(),
             },
             Response::Info {
-                population: None,
-                individual: None,
+                name: "".to_string(),
                 info: HashMap::new(),
             },
             Response::Info {
-                population: None,
-                individual: None,
+                name: "".to_string(),
                 info: info.clone(),
             },
             Response::Info {
-                population: Some("pop10".to_string()),
-                individual: Some(85),
+                name: "85".to_string(),
                 info: info.clone(),
             },
-            Response::Death {
-                population: None,
-                individual: Some(99),
-            },
-            Response::Death {
-                population: Some("2".to_string()),
-                individual: Some(99),
-            },
+            Response::Death { name: "".to_string() },
+            Response::Death { name: "99".to_string() },
         ];
         for msg in &all_requests {
-            all_responses.push(Response::Ack(msg.clone()));
+            all_responses.push(Response::Ack { ack: msg.clone() });
         }
 
         println!("REQUESTS:");
@@ -239,17 +233,79 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Request::Birth {
                 population: "pop1".to_string(),
-                individual: 1234,
+                name: "1234".to_string(),
                 controller: vec!["/usr/bin/q".to_string()],
-                genotype: serde_json::json! {
+                genome: serde_json::json! {
                     [
                         {"name": 6, "type": "foo"},
                         {"name": 7, "type": "bar"},
                     ]
                 },
+                parents: vec!["1020".to_string(), "1077".to_string()],
             })
             .unwrap(),
-            r#"{"Birth":{"population":"pop1","individual":1234,"controller":["/usr/bin/q"],"genotype":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}]}}"#
+            r#"{"Birth":{"population":"pop1","name":"1234","controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}],"parents":["1020","1077"]}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Request::Message(serde_json::json!({"foo":"bar"}))).unwrap(),
+            r#"{"Message":{"foo":"bar"}}"#
+        );
+    }
+
+    /// Check that the messages received from the environment are exactly as expected.
+    #[test]
+    fn recv_string() {
+        assert_eq!(
+            serde_json::to_string(&Response::Ack { ack: Request::Start }).unwrap(),
+            "{\"Ack\":\"Start\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::New {
+                population: String::new()
+            })
+            .unwrap(),
+            "{\"New\":\"\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::New {
+                population: "pop1".to_string()
+            })
+            .unwrap(),
+            "{\"New\":\"pop1\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Mate {
+                parents: ["parent1".to_string(), "parent2".to_string()]
+            })
+            .unwrap(),
+            "{\"Mate\":[\"parent1\",\"parent2\"]}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Score {
+                name: "xyz".to_string(),
+                score: -3.7
+            })
+            .unwrap(),
+            "{\"Score\":-3.7,\"name\":\"xyz\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Info {
+                name: "abcd".to_string(),
+                info: HashMap::new()
+            })
+            .unwrap(),
+            "{\"Info\":{},\"name\":\"abcd\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Death { name: String::new() }).unwrap(),
+            "{\"Death\":\"\"}"
+        );
+        assert_eq!(
+            serde_json::to_string(&Response::Death {
+                name: "abc".to_string()
+            })
+            .unwrap(),
+            "{\"Death\":\"abc\"}"
         );
     }
 }

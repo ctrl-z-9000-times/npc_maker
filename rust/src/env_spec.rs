@@ -1,10 +1,8 @@
 //! Structure of environment specification files.
 
-use crate::serde_utils::{deserialize_positive, multiline_string, required_string, JsonIoError};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 /// Static description of an environment and its interfaces.  
 /// Each environment specification file contains one of these.  
@@ -14,12 +12,15 @@ pub struct EnvironmentSpec {
     #[serde(skip)]
     pub spec: PathBuf,
 
-    /// Name of the environment, must be unique.
-    #[serde(deserialize_with = "required_string")]
+    /// Name of the environment, should be globally unique.
     pub name: String,
 
     /// Filesystem path of the environment’s executable program, relative to this file.
     pub path: PathBuf,
+
+    /// User facing documentation message.
+    #[serde(default)]
+    pub description: String,
 
     /// Specification for each population.
     #[serde(default)]
@@ -29,60 +30,29 @@ pub struct EnvironmentSpec {
     #[serde(default)]
     pub settings: Vec<SettingsSpec>,
 
-    /// User facing documentation message.
-    #[serde(default, deserialize_with = "multiline_string")]
-    pub description: String,
-
-    /// Request environmental control over the mating process.
-    #[serde(default)]
-    pub mating: bool,
-
-    /// Restrict this environment to a single instance on each computer.
-    #[serde(default)]
-    pub global: bool,
-
-    /// Estimated number of concurrent threads of computation.
-    #[serde(default = "default_one")]
-    pub threads: u32,
-
-    /// Estimated peak memory usage, measured in gigabytes.
-    #[serde(default, deserialize_with = "deserialize_positive")]
-    pub memory: f64,
+    /// Environments may include extra information.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 impl EnvironmentSpec {
     /// Load an environment specification from a JSON file.
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, JsonIoError> {
+    pub fn new(path: impl AsRef<Path>) -> Self {
         let path = path.as_ref(); // Convert into a proper &Path.
-        let spec = std::fs::read_to_string(path)?;
-        // .unwrap_or_else(|err| panic!("error reading file {path:?} {err}"));
-        let mut this: EnvironmentSpec = serde_json::from_str(&spec)?;
-        // .unwrap_or_else(|err| panic!("error parsing JSON file {path:?} {err}",));
+        let spec = std::fs::read_to_string(path).unwrap_or_else(|err| panic!("error reading file {path:?} {err}"));
+        let mut this: EnvironmentSpec =
+            serde_json::from_str(&spec).unwrap_or_else(|err| panic!("error parsing JSON file {path:?} {err}",));
         this.spec = path.into();
-        Ok(this)
+        this.normalize_path();
+        this
     }
 
-    /// Sanity checks on the environment specification file, panics on failure.
-    pub fn validate(&self) -> Result<(), String> {
-        let Self { spec, path, .. } = self;
-        if spec == &PathBuf::default() {
-            return Err("environment specification was not loaded from file".to_string());
+    fn normalize_path(&mut self) {
+        if self.path.is_relative() {
+            self.path = self.spec.parent().unwrap().join(&self.path)
         }
-        // Check that the environment program exists.
-        if !path.exists() {
-            return Err(format!("file not found {path:?}"));
-        }
-        if !path.is_file() {
-            return Err(format!("not a file {path:?}"));
-        }
-        // Check that the interface GIN's are unique.
-        for pop_spec in &self.populations {
-            let unique_gins: HashSet<u64> = pop_spec.interfaces.iter().map(|interface| interface.gin).collect();
-            if unique_gins.len() < pop_spec.interfaces.len() {
-                return Err(format!("interface has duplicate \"gin\", in file: {spec:?}"));
-            }
-        }
-        Ok(())
+        // assert!(self.path.exists(), "file not found {:?}", self.path);
+        // assert!(self.path.is_file(), "not a file {:?}", self.path);
     }
 }
 
@@ -93,31 +63,34 @@ pub struct PopulationSpec {
     pub name: String,
 
     /// User facing documentation message.
-    #[serde(default, deserialize_with = "multiline_string")]
+    #[serde(default)]
     pub description: String,
 
     /// Genetic interface for this lifeform’s body.
     #[serde(default)]
     pub interfaces: Vec<InterfaceSpec>,
+
+    /// Populations may include extra information.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
-/// Description of the interface between a body and its genotype.
+/// Description of the interface between a body and its controller.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct InterfaceSpec {
-    /// Global Innovation Number, must be unique within the interfaces array.
+    /// Global Innovation Number.
     pub gin: u64,
 
-    /// User facing name for this chromosome.
-    #[serde(deserialize_with = "required_string")]
+    /// User facing name for this interface.
     pub name: String,
 
-    /// List of acceptable chromosome types for this interface.  
-    #[serde(default)]
-    pub chromosome_types: Vec<Arc<str>>,
-
     /// User facing documentation message.
-    #[serde(default, deserialize_with = "multiline_string")]
+    #[serde(default)]
     pub description: String,
+
+    /// Interfaces may include extra information.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
 }
 
 /// Description of an environmental parameter.
@@ -132,7 +105,7 @@ pub enum SettingsSpec {
     Real {
         name: String,
 
-        #[serde(default, deserialize_with = "multiline_string")]
+        #[serde(default)]
         description: String,
 
         /// Lower bound on the range of allowable values, inclusive.
@@ -149,7 +122,7 @@ pub enum SettingsSpec {
     Integer {
         name: String,
 
-        #[serde(default, deserialize_with = "multiline_string")]
+        #[serde(default)]
         description: String,
 
         /// Lower bound on the range of allowable values, inclusive.
@@ -166,7 +139,7 @@ pub enum SettingsSpec {
     Boolean {
         name: String,
 
-        #[serde(default, deserialize_with = "multiline_string")]
+        #[serde(default)]
         description: String,
 
         /// Initial value for new environments.
@@ -177,7 +150,7 @@ pub enum SettingsSpec {
     Enumeration {
         name: String,
 
-        #[serde(default, deserialize_with = "multiline_string")]
+        #[serde(default)]
         description: String,
 
         /// Names of all of the variants of the enumeration.
@@ -229,6 +202,29 @@ impl SettingsSpec {
     }
 }
 
-const fn default_one() -> u32 {
-    1
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parse all of the env-spec's in the examples directory.
+    #[test]
+    fn test_examples() {
+        let mut examples_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        examples_dir.pop();
+        examples_dir.push("examples");
+        for entry in examples_dir.read_dir().unwrap() {
+            let Ok(entry) = entry else { continue };
+            if entry.path().is_dir() {
+                for file in entry.path().read_dir().unwrap() {
+                    let Ok(file) = file else { continue };
+                    if let Some(ext) = file.path().extension() {
+                        if ext == "env" {
+                            println!("EnvironmentSpec::new(\"{}\")", file.path().display());
+                            EnvironmentSpec::new(file.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

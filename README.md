@@ -1,4 +1,4 @@
-# The NPC Maker #
+# The NPC Maker
 
 The NPC Maker is a framework for interacting with simulated environments which
 contain AI agents. It provides a set of interfaces which separate the

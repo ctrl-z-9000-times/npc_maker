@@ -2,7 +2,7 @@
 //!
 //! Each controller runs in its own computer process and uses its standard I/O
 //! channels to communicate with the environment. The interface reserves the
-//! standard input and output channels its normal operations.
+//! standard input and output channels for its normal operations.
 //! Controllers should use stderr to report any unformatted or diagnostic
 //! messages (see [eprintln!()]).
 //! By default, controllers inherit stderr from the environment.

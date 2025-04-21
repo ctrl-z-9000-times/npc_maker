@@ -15,10 +15,6 @@
         "Topic :: Scientific/Engineering :: Artificial Life",
     ]
 
-[project.optional-dependencies]
-    evo_server = ["Flask"]
-    evo_client = ["requests"]
-
 [project.urls]
     Repository = "https://github.com/ctrl-z-9000-times/npc_maker"
     # Changelog = ""

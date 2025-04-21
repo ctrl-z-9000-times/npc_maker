@@ -10,6 +10,6 @@
 
 [dependencies]
     libc       = { version = "*" }
-    serde      = { version = "1", features = ["derive", "rc"] }
-    serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
+    serde      = { version = "1", features = ["derive"] }
+    serde_json = { version = "1", features = ["float_roundtrip"] }
     thiserror  = { version = "*" }
