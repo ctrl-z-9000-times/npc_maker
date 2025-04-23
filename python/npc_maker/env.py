@@ -732,6 +732,8 @@ def poll():
     if not message:
         sys.stdout.flush()
         sys.stderr.flush()
+        if sys.stdin.closed:
+            return "Quit"
         return None
     # Decode the JSON string into a python object.
     try:
@@ -762,7 +764,6 @@ def ack(message):
     Acknowledge that the given message has been received and successfully acted upon.
     The environment may send ack's unprompted to signal unexpected changes.
     """
-    global _quit_flag
     if "Birth" in message:
         pass # Birth messages shouldn't be acknowledged.
     else:
@@ -921,6 +922,10 @@ class SoloAPI:
         queue = collections.deque()
         state = "Stop"
 
+        def is_running():
+            has_work = queue or (controller is not None)
+            return (state == "Start" or state == "Stop") and has_work
+
         # Main Program Loop.
         while True:
 
@@ -968,7 +973,7 @@ class SoloAPI:
                 else:
                     eprint('Unrecognized request:', request)
 
-            if state == "Pause":
+            if not is_running():
                 idle_fps = 30
                 time.sleep(1 / idle_fps) # Don't excessively busy loop.
                 self.idle()
