@@ -797,7 +797,7 @@ def score(name, score):
     """
     name = str(name)
     score = str(score)
-    _try_print(json.dumps({"Score": str(score), "name": name}))
+    _try_print(json.dumps({"Score": score, "name": name}))
 
 def info(name, info):
     """
@@ -919,6 +919,7 @@ class SoloAPI:
         self = cls(env_spec, mode, **settings)
         population = env_spec["populations"][0]["name"]
         controller = None
+        cache = {} # command -> controller
         queue = collections.deque()
         state = "Stop"
 
@@ -963,7 +964,7 @@ class SoloAPI:
                     ack(request)
 
                 elif request == "Quit":
-                    if controller is not None:
+                    for controller in cache.values():
                         controller.quit()
                     ack(request)
                     self.quit()
@@ -974,9 +975,9 @@ class SoloAPI:
                     eprint('Unrecognized request:', request)
 
             if not is_running():
+                self.idle()
                 idle_fps = 30
                 time.sleep(1 / idle_fps) # Don't excessively busy loop.
-                self.idle()
 
             else:
                 # Birth New Controller.
@@ -985,11 +986,14 @@ class SoloAPI:
                     name       = request["name"]
                     command    = request["controller"]
                     genome     = json.dumps(request["genome"])
+                    # Reuse controller instances if able.
                     if controller is None:
-                        # TODO: Reuse controller instances if able.
+                        controller = cache.get(command)
+                    # Start a new controller process.
+                    if controller is None:
                         controller = npc_maker.ctrl.Controller(env_spec, population, command)
-                    if not controller.is_alive():
-                        return
+                        cache[command] = controller
+                    assert controller.is_alive()
                     controller.new(genome)
 
                 # Advance Controller One Step.
