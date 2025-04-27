@@ -33,7 +33,7 @@ fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
 
 /// An instance of a control system.
 ///
-/// This structure provides methods for using controllers.
+/// This object provides methods for using a controller.
 #[derive(Debug)]
 pub struct Controller {
     env: PathBuf,
@@ -96,11 +96,11 @@ impl Controller {
         return &self.cmd;
     }
 
-    /// Initialize the control system with a new genotype.  
+    /// Initialize the control system with a new genome.  
     /// This discards the currently loaded model.  
-    pub fn new_genotype(&mut self, genotype: &str) -> Result<(), io::Error> {
-        debug_assert!(!genotype.contains("\n"));
-        writeln!(self.stdin, "N{genotype}")?;
+    pub fn new_genome(&mut self, genome: &str) -> Result<(), io::Error> {
+        debug_assert!(!genome.contains("\n"));
+        writeln!(self.stdin, "N{genome}")?;
         Ok(())
     }
 
@@ -162,6 +162,7 @@ impl Controller {
         self.stdin.flush()?;
         Ok(())
     }
+
     ///  Load the state of the control system from file.
     pub fn load(&mut self, path: impl AsRef<Path>) -> Result<(), io::Error> {
         let path = path.as_ref().to_str().unwrap();
@@ -190,7 +191,7 @@ impl Drop for Controller {
 pub enum Message {
     Environment { environment: PathBuf },
     Population { population: String },
-    New { genotype: String },
+    New { genome: String },
     Reset,
     Advance { dt: f64 },
     SetInput { gin: u64, value: String },
@@ -209,7 +210,7 @@ impl Message {
 
             Self::Population { population } => write!(writer, "P{population}\n")?,
 
-            Self::New { genotype } => write!(writer, "N{genotype}\n")?,
+            Self::New { genome } => write!(writer, "N{genome}\n")?,
 
             Self::Reset => write!(writer, "R\n")?,
 
@@ -251,7 +252,7 @@ impl Message {
                 population: msg_body.to_string(),
             },
             "N" => Self::New {
-                genotype: msg_body.to_string(),
+                genome: msg_body.to_string(),
             },
             "R" => Self::Reset,
             "I" => {
@@ -296,8 +297,8 @@ impl Message {
 ///
 /// Controllers should implement this trait. Call "npc_maker::ctrl::main_loop()"
 /// with an instance of the implementation to run it as a controller program.
-pub trait Controller {
-    fn new(&mut self, genotype: String);
+pub trait API {
+    fn new(&mut self, genome: String);
 
     fn reset(&mut self);
 
@@ -339,10 +340,10 @@ pub fn send_output(gin: u64, value: String) -> Result<(), io::Error> {
 ///
 /// This method handles communications between the controller (this program) and
 /// the environment. It reads and parses messages from stdin, interfaces with
-/// your implementation of the Controller trait, and writes messages to stdout.
+/// your implementation of the API trait, and writes messages to stdout.
 ///
 /// This method never returns!
-pub fn main_loop(mut controller: impl Controller) -> Result<(), io::Error> {
+pub fn main_loop(mut controller: impl API) -> Result<(), io::Error> {
     loop {
         let message = poll()?;
         eprintln!("CTRL-STDIN: {message:?}");
@@ -353,8 +354,8 @@ pub fn main_loop(mut controller: impl Controller) -> Result<(), io::Error> {
             Message::Population { .. } => {
                 todo!()
             }
-            Message::New { genotype } => {
-                controller.new(genotype);
+            Message::New { genome } => {
+                controller.new(genome);
             }
             Message::Reset => {
                 controller.reset();
@@ -414,13 +415,11 @@ mod tests {
             },
             //
             Message::New {
-                genotype: "test123".to_string(),
+                genome: "test123".to_string(),
             },
+            Message::New { genome: "".to_string() },
             Message::New {
-                genotype: "".to_string(),
-            },
-            Message::New {
-                genotype: "] } ){([\\n\" ".to_string(),
+                genome: "] } ){([\\n\" ".to_string(),
             },
             //
             Message::Reset,

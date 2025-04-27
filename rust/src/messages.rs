@@ -89,7 +89,7 @@ pub enum Response {
     /// Report the score or reproductive fitness of an individual.
     Score {
         #[serde(rename = "Score")]
-        score: f64,
+        score: String,
         name: String,
     },
 
@@ -165,11 +165,11 @@ mod tests {
             },
             Response::Score {
                 name: "42".to_string(),
-                score: 42.2,
+                score: "42.2".to_string(),
             },
             Response::Score {
                 name: "21".to_string(),
-                score: 7.7,
+                score: "7.7".to_string(),
             },
             Response::Info {
                 name: "101".to_string(),
@@ -283,10 +283,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Response::Score {
                 name: "xyz".to_string(),
-                score: -3.7
+                score: "-3.7".to_string(),
             })
             .unwrap(),
-            "{\"Score\":-3.7,\"name\":\"xyz\"}"
+            "{\"Score\":\"-3.7\",\"name\":\"xyz\"}"
         );
         assert_eq!(
             serde_json::to_string(&Response::Info {
