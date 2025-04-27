@@ -232,7 +232,7 @@ Words in ALL-CAPS are placeholders for runtime data.
 | `"Quit"\n` |
 | `"Resume"\n` |
 | `{"Save":"PATH"}\n` |
-| `{"Score":NUMBER,"name":"UUID"}\n` |
+| `{"Score":"VALUE","name":"UUID"}\n` |
 | `"Start"\n` |
 | `"Stop"\n` |
 
