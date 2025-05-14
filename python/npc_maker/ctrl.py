@@ -10,8 +10,8 @@ import subprocess
 import sys
 
 __all__ = (
-    "Controller",
     "API",
+    "Controller",
     "eprint",
     "get_args",
     "main",

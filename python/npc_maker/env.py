@@ -11,25 +11,24 @@ import collections
 import datetime
 import json
 import os
-import shlex
 import subprocess
 import sys
 import time
 
 __all__ = (
-    "Specification",
+    "ack",
+    "death",
     "Environment",
-    # "Remote",
     "eprint",
     "get_args",
-    "poll",
-    "ack",
-    "new",
-    "mate",
-    "score",
     "info",
-    "death",
+    "mate",
+    "new",
+    "poll",
+    # "Remote",
+    "score",
     "SoloAPI",
+    "Specification",
 )
 
 def _timestamp():
@@ -253,53 +252,6 @@ class Environment:
     Each environment instance execute in its own subprocess
     and communicates with the caller over its standard I/O channels.
     """
-    @classmethod
-    def run(cls, individuals, env_spec, mode='graphical', settings={},
-            stderr=sys.stderr, timeout=None):
-        """
-        Evaluate the given individuals in the given environment.
-
-        Argument individuals is a dictionary indexed by population name.
-                 Each entry is an iterable of individuals.
-
-        The remaining arguments are for the Environment class constructor.
-
-        Returns an identical data structure except that the iterables are
-        replaced with lists of the evaluated individuals.
-        """
-        outstanding = 0 # Birth count - death count.
-        exhausted = False # Has at least one iterator ended?
-        class Dispatcher(npc_maker.evo.API):
-            def __init__(self, individuals):
-                self.iter = iter(individuals)
-                self.ascended = []
-            def birth(self, parents):
-                nonlocal outstanding
-                child = next(self.iter)
-                outstanding += 1
-                return child
-            def death(self, individual):
-                nonlocal outstanding
-                self.ascended.append(individual)
-                outstanding -= 1
-        dispatchers = {population: Dispatcher(indiv_list)
-                        for population, indiv_list in individuals.items()}
-        env = cls(dispatchers, env_spec, mode, settings,
-                  stderr=stderr, timeout=timeout)
-        env.start()
-        while env.is_alive():
-            if outstanding <= 0 and exhausted:
-                break
-            try:
-                env.poll()
-            except StopIteration:
-                exhausted = True
-                continue
-            time.sleep(0.1)
-        env.quit()
-        return {population: service.ascended
-                for population, service in dispatchers.items()}
-
     def __init__(self, services, env_spec, mode='graphical', settings={},
                  stderr=sys.stderr, timeout=None):
         """
@@ -386,6 +338,7 @@ class Environment:
             except IOError as error:
                 if error.errno == errno.EPIPE:
                     pass
+        self._kill_outstanding()
 
     def get_services(self):
         """ Get the evolution "services" argument. """
@@ -412,6 +365,16 @@ class Environment:
         Returns a dictionary indexed by individuals names.
         """
         return self.outstanding
+
+    def _kill_outstanding(self):
+        """
+        Return all outstanding individuals back to the evolutionary algorithm.
+        This effectively abandons them in the environment.
+        """
+        for individual in self.outstanding:
+            population = individual.get_population()
+            self.services[population].death(individual)
+        self.outstanding.clear()
 
     def get_timeout(self):
         """ Get the "timeout" argument. """
@@ -458,6 +421,7 @@ class Environment:
             self._process.stdin.flush()
         except BrokenPipeError:
             pass
+        self._kill_outstanding()
 
     def save(self, path):
         """
@@ -639,6 +603,53 @@ class Environment:
         Callback hook for subclasses to implement.
         Triggered by "ack" responses.
         """
+
+    @classmethod
+    def run(cls, individuals, env_spec, mode='graphical', settings={},
+            stderr=sys.stderr, timeout=None):
+        """
+        Evaluate the given individuals in the given environment.
+
+        Argument individuals is a dictionary indexed by population name.
+                 Each entry is an iterable of individuals.
+
+        The remaining arguments are for the Environment class constructor.
+
+        Returns an identical data structure except that the iterables are
+        replaced with lists of the evaluated individuals.
+        """
+        outstanding = 0 # Birth count - death count.
+        exhausted = False # Has at least one iterator ended?
+        class Dispatcher(npc_maker.evo.API):
+            def __init__(self, individuals):
+                self.iter = iter(individuals)
+                self.ascended = []
+            def birth(self, parents):
+                nonlocal outstanding
+                child = next(self.iter)
+                outstanding += 1
+                return child
+            def death(self, individual):
+                nonlocal outstanding
+                self.ascended.append(individual)
+                outstanding -= 1
+        dispatchers = {population: Dispatcher(indiv_list)
+                        for population, indiv_list in individuals.items()}
+        env = cls(dispatchers, env_spec, mode, settings,
+                  stderr=stderr, timeout=timeout)
+        env.start()
+        while env.is_alive():
+            if outstanding <= 0 and exhausted:
+                break
+            try:
+                env.poll()
+            except StopIteration:
+                exhausted = True
+                continue
+            time.sleep(0.1)
+        env.quit()
+        return {population: service.ascended
+                for population, service in dispatchers.items()}
 
 class Remote(Environment):
     """
@@ -988,11 +999,11 @@ class SoloAPI:
                     genome     = json.dumps(request["genome"])
                     # Reuse controller instances if able.
                     if controller is None:
-                        controller = cache.get(command)
+                        controller = cache.get(tuple(command))
                     # Start a new controller process.
                     if controller is None:
                         controller = npc_maker.ctrl.Controller(env_spec, population, command)
-                        cache[command] = controller
+                        cache[tuple(command)] = controller
                     assert controller.is_alive()
                     controller.new(genome)
 
