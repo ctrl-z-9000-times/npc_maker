@@ -252,13 +252,13 @@ class Environment:
     Each environment instance execute in its own subprocess
     and communicates with the caller over its standard I/O channels.
     """
-    def __init__(self, services, env_spec, mode='graphical', settings={},
+    def __init__(self, populations, env_spec, mode='graphical', settings={},
                  stderr=sys.stderr, timeout=None):
         """
         Start running an environment program.
 
-        Argument services is a dict of evolution API instances, indexed by population name.
-                 Every population must have a corresponding API instance.
+        Argument populations is a dict of evolution API instances, indexed by population name.
+                 Every population must have a corresponding instance of npc_maker.evo.API.
 
         Argument env_spec is the filesystem path of the environment specification.
 
@@ -279,16 +279,15 @@ class Environment:
         # Load the environment specification from file.
         self.env_spec = Specification(env_spec)
         # Special case for when there is exactly one population.
-        populations = self.env_spec["populations"]
-        if len(populations) == 1:
-            if isinstance(services, npc_maker.evo.API):
-                population = populations[0]["name"]
-                services = {population: services}
-        # Clean the services argument.
-        self.services = dict(services)
-        all_population_names = set(pop["name"] for pop in populations)
-        assert set(self.services.keys()) == all_population_names
-        assert all(isinstance(instance, npc_maker.evo.API) for instance in self.services.values())
+        populations_spec = self.env_spec["populations"]
+        if len(populations_spec) == 1:
+            if isinstance(populations, npc_maker.evo.API):
+                populations = {populations_spec[0]["name"]: populations}
+        # Clean the populations argument.
+        self.populations = dict(populations)
+        all_population_names = set(pop["name"] for pop in populations_spec)
+        assert set(self.populations.keys()) == all_population_names
+        assert all(isinstance(instance, npc_maker.evo.API) for instance in self.populations.values())
         # Clean the display mode argument.
         self.mode = str(mode).strip().lower()
         assert self.mode in ('graphical', 'headless')
@@ -340,9 +339,9 @@ class Environment:
                     pass
         self._kill_outstanding()
 
-    def get_services(self):
-        """ Get the evolution "services" argument. """
-        return self.services
+    def get_populations(self):
+        """ Get the "populations" argument. """
+        return self.populations
 
     def get_env_spec(self):
         """
@@ -372,8 +371,8 @@ class Environment:
         This effectively abandons them in the environment.
         """
         for individual in self.outstanding:
-            population = individual.get_population()
-            self.services[population].death(individual)
+            population_name = individual.get_population()
+            self.populations[population_name].death(individual)
         self.outstanding.clear()
 
     def get_timeout(self):
@@ -477,13 +476,13 @@ class Environment:
 
         This function is non-blocking and should be called periodically.
         """
-        def make_child(pop, parents):
-            service = self.services[pop]
-            child = service.birth(parents)
+        def make_child(population_name, parents):
+            population = self.populations[population_name]
+            child = population.birth(parents)
             if not isinstance(child, npc_maker.evo.Individual):
                 child = npc_maker.evo.Individual(**child)
             child.environment   = self.env_spec["name"]
-            child.population    = pop
+            child.population    = population_name
             return child
 
         # Limit the number of messages received to avoid blocking the main thread.
@@ -541,8 +540,8 @@ class Environment:
                 individual              = self.outstanding.pop(name)
                 individual.deathdate    = _timestamp()
                 individual.name         = None
-                population              = individual.get_population()
-                self.services[population].death(individual)
+                population_name         = individual.get_population()
+                self.populations[population_name].death(individual)
 
             elif "Ack" in message:
                 inner = message["Ack"]
@@ -633,8 +632,8 @@ class Environment:
                 nonlocal outstanding
                 self.ascended.append(individual)
                 outstanding -= 1
-        dispatchers = {population: Dispatcher(indiv_list)
-                        for population, indiv_list in individuals.items()}
+        dispatchers = {population_name: Dispatcher(indiv_list)
+                        for population_name, indiv_list in individuals.items()}
         env = cls(dispatchers, env_spec, mode, settings,
                   stderr=stderr, timeout=timeout)
         env.start()
@@ -648,8 +647,8 @@ class Environment:
                 continue
             time.sleep(0.1)
         env.quit()
-        return {population: service.ascended
-                for population, service in dispatchers.items()}
+        return {population_name: population.ascended
+                for population_name, population in dispatchers.items()}
 
 class Remote(Environment):
     """
@@ -658,7 +657,7 @@ class Remote(Environment):
     The environment will execute on the remote compute.
     """
     def __init__(self, hostname, port,
-                 services, env_spec, mode='graphical', settings={},
+                 populations, env_spec, mode='graphical', settings={},
                  stderr=sys.stderr, timeout=None):
         1/0 # TODO
 
@@ -784,7 +783,7 @@ def ack(message):
 
 def new(population=None):
     """
-    Request a new individual from the evolution service.
+    Request a new individual from this population's evolution API.
 
     Argument population is optional if the environment has exactly one population.
     """

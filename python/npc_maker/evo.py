@@ -220,9 +220,6 @@ class Individual:
         """
         How many individuals died before this individual?
         Returns None if this individual has not yet died.
-
-        The attribute "individual.ascension" is set by the evolution service.
-        Custom evolution services are encouraged to assign ascension numbers.
         """
         return self.ascension
 
