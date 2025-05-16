@@ -2,14 +2,16 @@
     name = "npc_maker"
     version = "0.1.0"
     edition = "2021"
-    rust-version = "1.79"
+    rust-version = "1.80"
     license = "MIT-0"
+    description = "Evolve AIs in simulated environments"
+    repository = "https://github.com/ctrl-z-9000-times/npc_maker"
 
 [lib]
     doctest = false
 
 [dependencies]
-    libc       = { version = "*" }
-    serde      = { version = "1", features = ["derive"] }
-    serde_json = { version = "1", features = ["float_roundtrip"] }
-    thiserror  = { version = "*" }
+    libc       = { version = "0.2" }
+    serde      = { version = "1.0", features = ["derive"] }
+    serde_json = { version = "1.0", features = ["float_roundtrip"] }
+    thiserror  = { version = "1.0" }

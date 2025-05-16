@@ -5,9 +5,8 @@
 //! Environments should use stderr to report any unformatted or diagnostic messages
 //! (see [eprintln!()]).
 
-use crate::env_spec::EnvironmentSpec;
-use crate::messages::{Request, Response};
-use crate::serde_utils::JsonIoError;
+use crate::env::{EnvironmentSpec, Request, Response};
+use crate::Error;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};

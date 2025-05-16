@@ -18,17 +18,14 @@ fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
     let mut path_iter = path.components();
     if let Some(root) = path_iter.next() {
         if root == std::path::Component::Normal(std::ffi::OsStr::new("~")) {
-            let mut path = std::env::home_dir().expect("File Error: failed to access paths relative to home directory");
-            for component in path_iter {
-                path.push(component);
-            }
+            let mut path = std::env::home_dir().expect("File Error: failed to find the user's home directory");
+            path.extend(path_iter);
             let path = path.canonicalize()?;
-            Ok(path)
+            return Ok(path);
         }
-    } else {
-        let path = path.canonicalize()?;
-        Ok(path)
     }
+    let path = path.canonicalize()?;
+    Ok(path)
 }
 
 /// An instance of a control system.
@@ -36,9 +33,9 @@ fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
 /// This object provides methods for using a controller.
 #[derive(Debug)]
 pub struct Controller {
-    env: PathBuf,
-    pop: String,
-    cmd: Vec<String>,
+    environment: PathBuf,
+    population: String,
+    command: Vec<String>,
     ctrl: Child,
     stdin: BufWriter<ChildStdin>,
     stdout: BufReader<ChildStdout>,
@@ -51,17 +48,17 @@ impl Controller {
     ///
     /// Argument command is the command line invocation for the controller program.  
     /// The first string in the list is the program, the remaining strings are its command line arguments.  
-    pub fn new(environment: impl AsRef<Path>, population: &str, command: &[String]) -> Result<Self, io::Error> {
+    pub fn new(environment: impl AsRef<Path>, population: &str, command: Vec<String>) -> Result<Self, io::Error> {
         // Clean the arguments.
-        let env = _clean_path(environment)?;
-        let pop = population.to_string();
-        let prog = _clean_path(&command[0])?;
-        let env_str = env.to_str().unwrap();
-        debug_assert!(!env_str.contains("\n"));
-        debug_assert!(!pop.contains("\n"));
+        let environment = _clean_path(environment)?;
+        let population = population.to_string();
+        let program = _clean_path(&command[0])?;
+        let environment_path = environment.to_str().unwrap();
+        debug_assert!(!environment_path.contains("\n"));
+        debug_assert!(!population.contains("\n"));
 
         // Setup and run the controller command in a subprocess.
-        let mut cmd = Command::new(&prog);
+        let mut cmd = Command::new(&program);
         cmd.args(&command[1..]);
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
@@ -71,13 +68,13 @@ impl Controller {
         let stdout = BufReader::new(ctrl.stdout.take().unwrap());
 
         //
-        writeln!(stdin, "E{}", env_str)?;
-        writeln!(stdin, "P{pop}")?;
+        writeln!(stdin, "E{}", environment_path)?;
+        writeln!(stdin, "P{population}")?;
 
         Ok(Self {
-            env,
-            pop,
-            cmd: command.to_vec(),
+            environment,
+            population,
+            command,
             ctrl,
             stdin,
             stdout,
@@ -85,15 +82,20 @@ impl Controller {
     }
 
     pub fn get_environment(&self) -> &Path {
-        return &self.env;
+        &self.environment
     }
 
     pub fn get_population(&self) -> &str {
-        return &self.pop;
+        &self.population
     }
 
     pub fn get_command(&self) -> &[String] {
-        return &self.cmd;
+        &self.command
+    }
+
+    pub fn is_alive(&mut self) -> Result<bool, io::Error> {
+        let exit_status_code = self.ctrl.try_wait()?;
+        Ok(exit_status_code.is_none())
     }
 
     /// Initialize the control system with a new genome.  
@@ -146,9 +148,7 @@ impl Controller {
             message.clear();
             self.stdout.read_line(&mut message)?;
             message.pop(); // Discard the trailing newline.
-            let mut parts = message.splitn(2, ":");
-            let gin = parts.next().unwrap();
-            let value = parts.next().unwrap();
+            let (gin, value) = message.split_once(":").unwrap();
             let gin = gin.parse().unwrap();
             outputs.insert(gin, value.to_string());
         }
@@ -206,27 +206,27 @@ impl Message {
     /// Format this message and write it to the given stream.
     pub fn write(&self, writer: &mut impl Write) -> Result<(), io::Error> {
         match self {
-            Self::Environment { environment } => write!(writer, "E{}\n", environment.to_str().unwrap())?,
+            Self::Environment { environment } => writeln!(writer, "E{}", environment.to_str().unwrap())?,
 
-            Self::Population { population } => write!(writer, "P{population}\n")?,
+            Self::Population { population } => writeln!(writer, "P{population}")?,
 
-            Self::New { genome } => write!(writer, "N{genome}\n")?,
+            Self::New { genome } => writeln!(writer, "N{genome}")?,
 
-            Self::Reset => write!(writer, "R\n")?,
+            Self::Reset => writeln!(writer, "R")?,
 
-            Self::Advance { dt } => write!(writer, "X{dt}\n")?,
+            Self::Advance { dt } => writeln!(writer, "X{dt}")?,
 
-            Self::SetInput { gin, value } => write!(writer, "I{gin}:{value}\n")?,
+            Self::SetInput { gin, value } => writeln!(writer, "I{gin}:{value}")?,
 
-            Self::SetBinary { gin, bytes } => write!(writer, "B{gin}:{}\n", bytes.len())?,
+            Self::SetBinary { gin, bytes } => writeln!(writer, "B{gin}:{}", bytes.len())?,
 
-            Self::GetOutput { gin } => write!(writer, "O{gin}\n")?,
+            Self::GetOutput { gin } => writeln!(writer, "O{gin}")?,
 
-            Self::Save { path } => write!(writer, "S{}\n", path.to_str().unwrap())?,
+            Self::Save { path } => writeln!(writer, "S{}", path.to_str().unwrap())?,
 
-            Self::Load { path } => write!(writer, "L{}\n", path.to_str().unwrap())?,
+            Self::Load { path } => writeln!(writer, "L{}", path.to_str().unwrap())?,
 
-            Self::Quit => write!(writer, "Q\n")?,
+            Self::Quit => writeln!(writer, "Q")?,
         };
         if let Self::SetBinary { bytes, .. } = self {
             writer.write_all(bytes.as_slice())?;
@@ -297,6 +297,7 @@ impl Message {
 ///
 /// Controllers should implement this trait. Call "npc_maker::ctrl::main_loop()"
 /// with an instance of the implementation to run it as a controller program.
+#[allow(unused_variables)]
 pub trait API {
     fn new(&mut self, genome: String);
 
@@ -324,29 +325,28 @@ pub trait API {
 }
 
 /// Wait for the next message from the environment, for implementing controllers.
-pub fn poll() -> Result<Message, io::Error> {
+fn poll() -> Result<Message, io::Error> {
     Message::read(&mut io::stdin().lock())
 }
 
 /// Send an output value to the environment, for implementing controllers.
-pub fn send_output(gin: u64, value: String) -> Result<(), io::Error> {
+pub fn output(gin: u64, value: String) -> Result<(), io::Error> {
     debug_assert!(!value.contains("\n"));
     println!("{gin}:{value}");
     io::stdout().flush()?;
     Ok(())
 }
 
-/// Start the main program loop.
+/// Start a controller's main program loop.
 ///
 /// This method handles communications between the controller (this program) and
 /// the environment. It reads and parses messages from stdin, interfaces with
 /// your implementation of the API trait, and writes messages to stdout.
 ///
 /// This method never returns!
-pub fn main_loop(mut controller: impl API) -> Result<(), io::Error> {
+pub fn main(mut controller: impl API) -> Result<(), io::Error> {
     loop {
         let message = poll()?;
-        eprintln!("CTRL-STDIN: {message:?}");
         match message {
             Message::Environment { .. } => {
                 todo!()
@@ -370,8 +370,8 @@ pub fn main_loop(mut controller: impl API) -> Result<(), io::Error> {
                 controller.set_binary(gin, bytes);
             }
             Message::GetOutput { gin } => {
-                let output = controller.get_output(gin);
-                send_output(gin, output)?;
+                let value = controller.get_output(gin);
+                output(gin, value)?;
             }
             Message::Save { path } => {
                 controller.save(path);

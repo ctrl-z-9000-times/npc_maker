@@ -54,6 +54,26 @@ impl EnvironmentSpec {
         // assert!(self.path.exists(), "file not found {:?}", self.path);
         // assert!(self.path.is_file(), "not a file {:?}", self.path);
     }
+
+    pub fn get_args(&self, graphical: bool, settings: &HashMap<String, String>) -> Vec<String> {
+        // Setup the program's command line invocation and marshal its arguments.
+        let mut args: Vec<String> = vec![
+            self.path.to_str().unwrap().to_string(),
+            self.spec.to_str().unwrap().to_string(),
+            (if graphical { "graphical" } else { "headless" }).to_string(),
+        ];
+        args.reserve(2 * self.settings.len());
+        for parameter in &self.settings {
+            let name = parameter.name();
+            let value = match settings.get(name) {
+                Some(r#override) => r#override.clone(),
+                None => parameter.default(),
+            };
+            args.push(name.to_string());
+            args.push(value);
+        }
+        args
+    }
 }
 
 /// Description for each specific population within an environment.
