@@ -8,6 +8,7 @@ import json
 import shlex
 import subprocess
 import sys
+import time
 
 __all__ = (
     "API",
@@ -215,16 +216,18 @@ class Controller:
 
     def quit(self):
         """
-        Stop running the controller process.
+        Tell the controller process to stop running.
         """
         self._ctrl.stdin.write(b"Q\n")
         self._ctrl.stdin.flush()
-        self._ctrl.stdin.close()
 
     def __del__(self):
         if hasattr(self, "_ctrl") and not self._ctrl.stdin.closed:
             try:
                 self.quit()
+                self._ctrl.stdin.close()
+            except BrokenPipeError:
+                pass
             except IOError as error:
                 if error.errno == errno.EPIPE:
                     pass
@@ -352,19 +355,42 @@ _population  = None
 
 def _readline():
     global _stdin, _buffer
+    read_size = 1000
     if _stdin is None:
-        _stdin = open(sys.stdin.fileno(),  mode='rb')
+        _stdin = open(sys.stdin.fileno(),  mode='rb', buffering=0)
     if b"\n" not in _buffer:
         while True:
-            chunk = _stdin.read1()
+            chunk = _stdin.read(read_size)
+            # Yield execution if waiting for data.
+            if chunk is None:
+                time.sleep(0)
+                continue
+            # Check for EOF.
+            if len(chunk) == 0:
+                raise EOFError("stdin closed")
+            # Incorporate the chunk into our internal buffer.
             _buffer += chunk
             if b"\n" in chunk:
                 break
-            if _stdin.closed:
-                raise EOFError("stdin closed")
     line, _buffer = _buffer.split(b"\n", maxsplit=1)
     line = line.decode("utf-8")
     return line
+
+def _readbytes(num_bytes):
+    global _stdin, _buffer
+    while len(_buffer) < num_bytes:
+        chunk = _stdin.read(num_bytes - len(_buffer))
+        # Yield execution if waiting for data.
+        if chunk is None:
+            time.sleep(0)
+            continue
+        # Check for EOF.
+        if len(chunk) == 0:
+            raise EOFError("stdin closed")
+        _buffer += chunk
+    data    = _buffer[:num_bytes]
+    _buffer = _buffer[num_bytes:]
+    return data
 
 def _parse_message():
     # Ignore leading white space and empty lines.
@@ -399,7 +425,10 @@ def main(controller):
         controller = controller()
     assert isinstance(controller, API)
     while True:
-        msg_type, msg_body = _parse_message()
+        try:
+            msg_type, msg_body = _parse_message()
+        except EOFError:
+            break
 
         if msg_type == "I":
             gin, value = msg_body.split(":", maxsplit=1)
@@ -415,15 +444,18 @@ def main(controller):
                 print(reply, flush=True)
             except ValueError:
                 if sys.stdout.closed:
-                    raise EOFError("stdout closed")
+                    break
+                else:
+                    raise
 
         elif msg_type == "B":
             gin, num_bytes  = msg_body.split(":")
             gin             = int(gin)
             num_bytes       = int(num_bytes)
-            binary          = _stdin.read(num_bytes)
-            if len(binary) != num_bytes:
-                raise EOFError("stdin closed")
+            try:
+                binary      = _readbytes(num_bytes)
+            except EOFError:
+                break
             controller.set_binary(gin, binary)
 
         elif msg_type == "X":

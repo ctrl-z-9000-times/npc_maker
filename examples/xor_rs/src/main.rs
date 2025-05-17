@@ -1,4 +1,8 @@
-fn xor_test(ctrl: &mut ctrl_api::Instance, verbose: bool) -> f64 {
+use npc_maker::ctrl::Controller;
+use npc_maker::env;
+use npc_maker::env::Request;
+
+fn xor_test(ctrl: &mut Controller, verbose: bool) -> f64 {
     let mut distance: f64 = 0.0;
     for input_1 in 0..=1 {
         for input_2 in 0..=1 {
@@ -34,51 +38,49 @@ fn xor_test(ctrl: &mut ctrl_api::Instance, verbose: bool) -> f64 {
 }
 
 fn main() {
-    let (env_spec, mode, _settings) = env_api::get_args();
+    let (env_spec, mode, _settings) = npc_maker::env::get_args();
 
-    let mut ctrl: Option<ctrl_api::Instance> = None;
+    let mut ctrl: Option<Controller> = None;
 
     loop {
-        let Some(request) = env_api::poll().unwrap() else {
+        let Some(request) = npc_maker::env::poll().unwrap() else {
             std::thread::sleep(std::time::Duration::from_millis(50));
             continue;
         };
+
         match request {
-            env_api::Request::Quit => break,
+            Request::Quit => break,
 
-            env_api::Request::Heartbeat | env_api::Request::Stop | env_api::Request::Pause => {
-                env_api::ack(&request).unwrap()
-            }
+            Request::Heartbeat | Request::Stop | Request::Pause => env::ack(&request),
 
-            env_api::Request::Save(_) | env_api::Request::Load(_) => {
+            Request::Save(_) | Request::Load(_) | Request::Message(_) => {
                 // Save/Load are unimplemented for this environment, do nothing.
             }
 
-            env_api::Request::Start | env_api::Request::Resume => {
-                env_api::ack(&request).unwrap();
-                env_api::request_new(None).unwrap();
+            Request::Start | Request::Resume => {
+                env::ack(&request);
+                env::new(Some("xor"));
             }
 
-            env_api::Request::Birth {
-                individual,
-                population,
+            Request::Birth {
+                name,
                 controller,
-                genotype,
+                genome,
+                ..
             } => {
-                assert_eq!(population, "xor");
                 if let Some(ctrl) = &ctrl {
                     assert_eq!(ctrl.get_command(), controller);
                 } else {
-                    ctrl = Some(ctrl_api::Instance::new(&env_spec.spec, &population, &controller).unwrap());
+                    ctrl = Some(Controller::new(&env_spec.spec, "xor", controller).unwrap());
                 }
                 let ctrl = ctrl.as_mut().unwrap();
 
-                let genotype = serde_json::to_string(&genotype).unwrap();
-                ctrl.new_genotype(&genotype).unwrap();
-                let score = xor_test(ctrl, mode == env_api::Mode::Graphical);
-                env_api::report_score(Some(&population), Some(individual), score).unwrap();
-                env_api::report_death(Some(&population), Some(individual)).unwrap();
-                env_api::request_new(Some(&population)).unwrap();
+                let genome = serde_json::to_string(&genome).unwrap();
+                ctrl.new_genome(&genome).unwrap();
+                let score = xor_test(ctrl, mode == env::Mode::Graphical);
+                env::score(Some(&name), &score.to_string());
+                env::death(Some(&name));
+                env::new(Some("xor"));
             }
         }
     }

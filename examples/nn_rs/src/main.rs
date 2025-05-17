@@ -2,10 +2,8 @@
 //!
 //! This file demonstrates how to implement a control system for the NPC Maker.
 
-use ctrl_api::{poll, Message};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io;
 
 pub fn logistic(value: f64, slope: f64, midpoint: f64) -> f64 {
     // The magic number 4.0 scales the maximum slope of the curve to 1.0
@@ -52,10 +50,10 @@ struct NeuralNetwork {
     edges: Vec<(u64, u64, f64)>,
 }
 
-impl NeuralNetwork {
-    pub fn new(&mut self, genotype: &str) {
+impl npc_maker::ctrl::API for NeuralNetwork {
+    fn new(&mut self, _env: &std::path::Path, _pop: &str, genotype: String) {
         //
-        let mut genotype: Vec<Chromosome> = serde_json::from_str(genotype).unwrap();
+        let mut genotype: Vec<Chromosome> = serde_json::from_str(&genotype).unwrap();
         genotype.sort_unstable_by_key(|x| x.name());
         //
         self.names = genotype
@@ -93,11 +91,11 @@ impl NeuralNetwork {
             .collect();
     }
 
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.state.fill(0.0);
     }
 
-    pub fn advance(&mut self, _dt: f64) {
+    fn advance(&mut self, _dt: f64) {
         let mut next_state = vec![0.0; self.nodes.len()];
         for (presyn, postsyn, weight) in self.edges.iter().copied() {
             next_state[postsyn as usize] += weight * self.state[presyn as usize];
@@ -107,35 +105,16 @@ impl NeuralNetwork {
         }
         self.state = next_state;
     }
+
+    fn set_input(&mut self, gin: u64, value: String) {
+        self.state[gin as usize] = value.parse().unwrap();
+    }
+
+    fn get_output(&mut self, gin: u64) -> String {
+        self.state[gin as usize].to_string()
+    }
 }
 
-fn main() -> Result<(), io::Error> {
-    let mut nn = NeuralNetwork::default();
-    loop {
-        let message = poll()?;
-        match message {
-            Message::New { genotype } => {
-                nn.new(&genotype);
-            }
-            Message::Reset => {
-                nn.reset();
-            }
-            Message::SetInput { gin, value } => {
-                nn.state[gin as usize] = value.parse().unwrap();
-            }
-            Message::GetOutput { gin } => {
-                ctrl_api::send_output(gin, nn.state[gin as usize].to_string())?;
-            }
-            Message::Advance { dt } => {
-                nn.advance(dt);
-            }
-
-            Message::Quit => break,
-
-            Message::Environment { .. } | Message::Population { .. } => {}
-
-            _ => panic!("unsupported operation: {message:?}"),
-        }
-    }
-    Ok(())
+fn main() {
+    npc_maker::ctrl::main(NeuralNetwork::default()).unwrap();
 }

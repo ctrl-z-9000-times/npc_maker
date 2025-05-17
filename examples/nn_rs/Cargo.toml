@@ -6,5 +6,5 @@
 
 [dependencies]
     npc_maker  = { path = "../../rust/" }
-    serde      = { version = "*" }
-    serde_json = { version = "*" }
+    serde      = { version = "1.0" }
+    serde_json = { version = "1.0" }

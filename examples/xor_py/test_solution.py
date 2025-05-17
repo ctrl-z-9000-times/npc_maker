@@ -4,19 +4,20 @@ Solve the XOR environment using the NN controller.
 This tests all combinations of programming languages.
 """
 
-import npc_maker.env
 from pathlib import Path
+import npc_maker.env
+import time
 
 repo = Path(__file__).parent.parent.parent
 
 environments = [
-    repo.joinpath("examples/xor/xor.env"),
-    # repo.joinpath("examples/xor/xor_rust.env"),
+    repo.joinpath("examples/xor_py/xor.env"),
+    repo.joinpath("examples/xor_rs/xor.env"),
 ]
 
 controllers = [
-    repo.joinpath("examples/nn/nn.py"),
-    # repo.joinpath("examples/nn/target/debug/logistic"),
+    repo.joinpath("examples/nn_py/nn.py"),
+    repo.joinpath("examples/nn_rs/target/release/nn"),
 ]
 
 solution = [
@@ -38,6 +39,7 @@ def test_solution():
             results     = npc_maker.env.Environment.run({"xor": [individual]}, env_path)
             score       = float(results["xor"][0].get_score())
             assert score >= 15.0
+            time.sleep(0.25)
 
 if __name__ == "__main__":
     test_solution()

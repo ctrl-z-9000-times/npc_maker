@@ -8,12 +8,12 @@
 //! By default, controllers inherit stderr from the environment.
 
 use std::collections::HashMap;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Result, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
+fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf> {
     let path = path.as_ref();
     // Expand home directory.
     let mut path_iter = path.components();
@@ -49,7 +49,7 @@ impl Controller {
     ///
     /// Argument command is the command line invocation for the controller program.  
     /// The first string in the list is the program, the remaining strings are its command line arguments.  
-    pub fn new(environment: impl AsRef<Path>, population: &str, command: Vec<String>) -> Result<Self, io::Error> {
+    pub fn new(environment: impl AsRef<Path>, population: &str, command: Vec<String>) -> Result<Self> {
         // Clean the arguments.
         let environment = _clean_path(environment)?;
         let population = population.to_string();
@@ -94,40 +94,40 @@ impl Controller {
         &self.command
     }
 
-    pub fn is_alive(&mut self) -> Result<bool, io::Error> {
+    pub fn is_alive(&mut self) -> Result<bool> {
         let exit_status_code = self.ctrl.try_wait()?;
         Ok(exit_status_code.is_none())
     }
 
     /// Initialize the control system with a new genome.  
     /// This discards the currently loaded model.  
-    pub fn new_genome(&mut self, genome: &str) -> Result<(), io::Error> {
+    pub fn new_genome(&mut self, genome: &str) -> Result<()> {
         debug_assert!(!genome.contains('\n'));
         writeln!(self.stdin, "N{genome}")?;
         Ok(())
     }
 
     /// Reset the control system to its initial state.
-    pub fn reset(&mut self) -> Result<(), io::Error> {
+    pub fn reset(&mut self) -> Result<()> {
         writeln!(self.stdin, "R")?;
         Ok(())
     }
 
     /// Advance the control system's internal state.
-    pub fn advance(&mut self, dt: f64) -> Result<(), io::Error> {
+    pub fn advance(&mut self, dt: f64) -> Result<()> {
         writeln!(self.stdin, "X{dt}")?;
         Ok(())
     }
 
     /// Write a single value to a GIN in the controller.
-    pub fn set_input(&mut self, gin: u64, value: &str) -> Result<(), io::Error> {
+    pub fn set_input(&mut self, gin: u64, value: &str) -> Result<()> {
         debug_assert!(!value.contains('\n'));
         writeln!(self.stdin, "I{gin}:{value}")?;
         Ok(())
     }
 
     /// Write an array of bytes to a GIN in the controller.
-    pub fn set_binary(&mut self, gin: u64, value: &[u8]) -> Result<(), io::Error> {
+    pub fn set_binary(&mut self, gin: u64, value: &[u8]) -> Result<()> {
         writeln!(self.stdin, "B{gin}:{}", value.len())?;
         self.stdin.write_all(value)?;
         Ok(())
@@ -136,7 +136,7 @@ impl Controller {
     /// Retrieve a list of outputs, as identified by their GIN.
     ///
     /// This method blocks on IO.
-    pub fn get_outputs(&mut self, gin_list: &[u64]) -> Result<HashMap<u64, String>, io::Error> {
+    pub fn get_outputs(&mut self, gin_list: &[u64]) -> Result<HashMap<u64, String>> {
         // Request the outputs.
         for gin in gin_list {
             writeln!(self.stdin, "O{gin}")?;
@@ -157,7 +157,7 @@ impl Controller {
     }
 
     /// Save the current state of the control system to file.
-    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref().to_str().unwrap();
         debug_assert!(!path.contains('\n'));
         writeln!(self.stdin, "S{path}")?;
@@ -166,7 +166,7 @@ impl Controller {
     }
 
     ///  Load the state of the control system from file.
-    pub fn load(&mut self, path: impl AsRef<Path>) -> Result<(), io::Error> {
+    pub fn load(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref().to_str().unwrap();
         debug_assert!(!path.contains('\n'));
         writeln!(self.stdin, "L{path}")?;
@@ -174,7 +174,7 @@ impl Controller {
     }
 
     /// Send a custom message to the controller using a new message type.
-    pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<(), io::Error> {
+    pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<()> {
         debug_assert!(!"EPNRXIBOSLQ".contains(message_type));
         debug_assert!(!message_body.contains('\n'));
         writeln!(self.stdin, "{message_type}{message_body}")?;
@@ -182,7 +182,7 @@ impl Controller {
     }
 
     /// Stop running the controller process.
-    pub fn quit(&mut self) -> Result<(), io::Error> {
+    pub fn quit(&mut self) -> Result<()> {
         writeln!(self.stdin, "Q")?;
         self.stdin.flush()?;
         Ok(())
@@ -217,7 +217,7 @@ pub enum Message {
 
 impl Message {
     /// Format this message and write it to the given stream.
-    pub fn write(&self, writer: &mut impl Write) -> Result<(), io::Error> {
+    pub fn write(&self, writer: &mut impl Write) -> Result<()> {
         match self {
             Self::Environment { environment } => writeln!(writer, "E{}", environment.to_str().unwrap())?,
 
@@ -250,17 +250,18 @@ impl Message {
     }
 
     /// Parse the next message from the given input stream. Blocking.
-    pub fn read(reader: &mut impl BufRead) -> Result<Message, io::Error> {
+    pub fn read(reader: &mut impl BufRead) -> Result<Message> {
         let mut line = String::new();
         while line.is_empty() {
-            reader.read_line(&mut line)?;
+            let bytes_read = reader.read_line(&mut line)?;
+            if bytes_read == 0 {
+                return Err(Error::new(ErrorKind::UnexpectedEof, "stdin closed"));
+            }
             line.pop(); // Remove the trailing newline.
         }
-        let Some((msg_type, msg_body)) = line.split_at_checked(1) else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
-        };
-        let msg_type = msg_type.chars().next().unwrap().to_ascii_uppercase();
-        let msg_data = match msg_type {
+        let msg_type = line.chars().next().unwrap();
+        let msg_body = &line[msg_type.len_utf8()..];
+        let msg_data = match msg_type.to_ascii_uppercase() {
             'E' => Self::Environment {
                 environment: msg_body.into(),
             },
@@ -273,7 +274,7 @@ impl Message {
             'R' => Self::Reset,
             'I' => {
                 let Some((gin, value)) = msg_body.split_once(":") else {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
+                    return Err(Error::new(ErrorKind::InvalidData, "error message"));
                 };
                 Self::SetInput {
                     gin: gin.trim().parse::<u64>().unwrap(),
@@ -282,7 +283,7 @@ impl Message {
             }
             'B' => {
                 let Some((gin, num_bytes)) = msg_body.split_once(":") else {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
+                    return Err(Error::new(ErrorKind::InvalidData, "error message"));
                 };
                 let num_bytes = num_bytes.trim().parse::<usize>().unwrap();
                 let mut bytes = vec![0; num_bytes];
@@ -369,15 +370,15 @@ pub trait API {
 }
 
 /// Wait for the next message from the environment, for implementing controllers.
-fn poll() -> Result<Message, io::Error> {
-    Message::read(&mut io::stdin().lock())
+fn poll() -> Result<Message> {
+    Message::read(&mut std::io::stdin().lock())
 }
 
 /// Send an output value to the environment, for implementing controllers.
-pub fn output(gin: u64, value: String) -> Result<(), io::Error> {
+fn output(gin: u64, value: String) -> Result<()> {
     debug_assert!(!value.contains('\n'));
     println!("{gin}:{value}");
-    io::stdout().flush()?;
+    std::io::stdout().flush()?;
     Ok(())
 }
 
@@ -392,7 +393,7 @@ static POPULATION: Mutex<Option<String>> = Mutex::new(None);
 /// your implementation of the API trait, and writes messages to stdout.
 ///
 /// This method never returns!
-pub fn main(mut controller: impl API) -> Result<(), io::Error> {
+pub fn main(mut controller: impl API) -> Result<()> {
     loop {
         let message = poll()?;
         match message {
@@ -403,10 +404,21 @@ pub fn main(mut controller: impl API) -> Result<(), io::Error> {
                 POPULATION.lock().unwrap().replace(population);
             }
             Message::New { genome } => {
+                // Wait for the locks.
                 let environment_lock = ENVIRONMENT.lock().unwrap();
                 let population_lock = POPULATION.lock().unwrap();
-                let environment = environment_lock.as_ref().unwrap();
-                let population = population_lock.as_ref().unwrap();
+                // Borrow the data.
+                let environment = environment_lock.as_ref();
+                let population = population_lock.as_ref();
+                // Fill in missing values.
+                let environment = match environment {
+                    Some(ref_path_buf) => ref_path_buf.as_path(),
+                    None => Path::new(""),
+                };
+                let population = match population {
+                    Some(ref_string) => ref_string.as_str(),
+                    None => "",
+                };
                 controller.new(environment, population, genome);
             }
             Message::Reset => {
@@ -575,7 +587,15 @@ mod tests {
             //
             Message::Custom {
                 message_type: '~',
-                body: "hello custom message".to_string(),
+                body: ":hello custom message:".to_string(),
+            },
+            Message::Custom {
+                message_type: '$',
+                body: "".to_string(),
+            },
+            Message::Custom {
+                message_type: '!',
+                body: " \t ".to_string(),
             },
             //
             Message::Quit,

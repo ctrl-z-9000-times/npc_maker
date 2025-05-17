@@ -82,7 +82,7 @@ class XorTest(env.SoloAPI):
                     answer  = max(0.0, min(1.0, answer))
                     distance += abs(answer - correct)
                     if self.verbose:
-                        env.eprint(f"{input_1} xor {input_2} = {correct} : {answer}")
+                        env.eprint(f"{input_1} xor {input_2} = {answer}")
                 else:
                     # Discard neural networks that contain recurrent connections
                     # or have too many hidden layers.

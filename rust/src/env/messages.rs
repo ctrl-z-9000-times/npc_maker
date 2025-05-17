@@ -51,10 +51,19 @@ pub enum Request {
     /// response to a request for either a new individual or a mating of two
     /// individuals. This message does not need to be acknowledged.
     Birth {
+        #[serde(default)]
+        environment: String,
+
+        #[serde(default)]
         population: String,
+
         name: String,
+
         controller: Vec<String>,
+
         genome: serde_json::Value,
+
+        #[serde(default)]
         parents: Vec<String>,
     },
 

@@ -209,8 +209,9 @@ pub fn ack(message: &Request) {
         return;
     }
     let mut stdout = io::stdout().lock();
+    write!(stdout, "{{\"Ack\":").unwrap();
     serde_json::to_writer(&mut stdout, message).unwrap();
-    writeln!(stdout).unwrap();
+    writeln!(stdout, "}}").unwrap();
 }
 
 /// Request a new individual from the evolutionary algorithm.

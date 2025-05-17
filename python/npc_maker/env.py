@@ -276,6 +276,7 @@ class Environment:
                 environment before declaring it dead and raising a TimeoutError.
                 Optional, if missing or None then this will wait forever.
         """
+        self.outstanding = {}
         # Load the environment specification from file.
         self.env_spec = Specification(env_spec)
         # Special case for when there is exactly one population.
@@ -315,8 +316,6 @@ class Environment:
         # 
         self.timeout = None if timeout is None else float(timeout)
         self.watchdog = time.time()
-        # 
-        self.outstanding = {}
 
     def is_alive(self):
         """
@@ -327,11 +326,10 @@ class Environment:
     def __del__(self):
         if hasattr(self, "_process"): # Guard against crashes in __init__.
             try:
-                # Garbage Collection: It's too late to cleanly "quit" the
-                # environment, just kill it from our end if possible.
+                self.quit()
                 self._process.stdin.close()
-                self._process.stdout.close()
-                self._process.terminate()
+                # self._process.stdout.close() # Do not close the stdout pipe. Python complains too loudly.
+                # self._process.terminate() # Do not force kill the process. Give it time to exit cleanly.
             except BrokenPipeError:
                 pass
             except IOError as error:
@@ -370,7 +368,7 @@ class Environment:
         Return all outstanding individuals back to the evolutionary algorithm.
         This effectively abandons them in the environment.
         """
-        for individual in self.outstanding:
+        for individual in self.outstanding.values():
             population_name = individual.get_population()
             self.populations[population_name].death(individual)
         self.outstanding.clear()
@@ -446,7 +444,7 @@ class Environment:
         self._process.stdin.write(f'{{"Message":{message}}}\n'.encode('utf-8'))
         self._process.stdin.flush()
 
-    def _birth(self, individual):
+    def _birth(self, individual, parents):
         """
         Send an individual to the environment.
         Individuals must not be birthed more than once.
@@ -459,7 +457,7 @@ class Environment:
         name    = individual.get_name()
         ctrl    = individual.get_controller()
         genome  = individual.get_genome()
-        parents = individual.get_parents()
+        parents = [p.get_name() for p in parents]
         if ctrl is None:
             raise ValueError("indiviual is missing controller")
         ctrl[0] = str(ctrl[0]) # Convert Path to String
@@ -505,23 +503,24 @@ class Environment:
             message = json.loads(message)
 
             if "New" in message:
-                pop = message["New"]
-                if pop is None:
+                population = message["New"]
+                if population is None:
                     all_populations = self.env_spec["populations"]
                     if len(all_populations) == 1:
-                        pop = all_populations[0]["name"]
+                        population = all_populations[0]["name"]
                     else:
                         raise ValueError("missing field \"populations\"")
-                child = make_child(pop, [])
-                self._birth(child)
+                parents = []
+                child = make_child(population, parents)
+                self._birth(child, parents)
 
             elif "Mate" in message:
                 parents = message["Mate"]
                 parents = [self.outstanding[p] for p in parents]
-                pop     = parents[0].get_population()
-                assert all(p.get_population() == pop for p in parents)
-                child   = make_child(pop, parents)
-                self._birth(child)
+                population = parents[0].get_population()
+                assert all(p.get_population() == population for p in parents)
+                child = make_child(population, parents)
+                self._birth(child, parents)
 
             elif "Score" in message:
                 score       = message["Score"]
