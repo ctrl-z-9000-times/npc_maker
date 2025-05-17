@@ -811,7 +811,7 @@ def score(name, score):
 
 def info(name, info):
     """
-    Report arbitrary extraneous information about an individual to the NPC Maker.
+    Report extra information about an individual.
 
     Argument info is a mapping of string key-value pairs.
     """
@@ -823,8 +823,8 @@ def death(name):
     """
     Notify the evolution API that the given individual has died.
 
-    If the individual had a score or reproductive fitness then it should be
-    reported using the "score()" function *before* calling this method.
+    The individual's score or reproductive fitness should be reported
+    using the "score()" function *before* calling this method.
     """
     name = str(name)
     _try_print(json.dumps({"Death": name}))

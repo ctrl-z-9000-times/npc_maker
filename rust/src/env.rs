@@ -11,9 +11,6 @@ mod specification;
 pub use messages::{Request, Response};
 pub use specification::{EnvironmentSpec, InterfaceSpec, PopulationSpec, SettingsSpec};
 
-/*
-
-use crate::Error as JsonIoError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
@@ -22,8 +19,13 @@ use std::path::Path;
 use std::str::FromStr;
 
 /// Display mode for environments.
-#[derive(Debug, Default, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, Deserialize, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum Mode {
+    /// Disable graphical output.
+    ///
+    /// The environment should run as quickly and quietly as possible.
+    Headless,
+
     /// Display graphical output to the user.
     ///
     /// This mode is for demonstrations and so the environment should run in as
@@ -32,11 +34,6 @@ pub enum Mode {
     /// The environment may also print diagnostic information to stderr.
     #[default]
     Graphical,
-
-    /// Disable graphical output.
-    ///
-    /// The environment should run as quickly and quietly as possible.
-    Headless,
 }
 
 impl std::fmt::Display for Mode {
@@ -49,14 +46,26 @@ impl std::fmt::Display for Mode {
 }
 
 impl FromStr for Mode {
-    type Err = ();
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim().to_ascii_lowercase();
         match s.as_str() {
             "graphical" => Ok(Mode::Graphical),
             "headless" => Ok(Mode::Headless),
-            _ => Err(()),
+            _ => Err(format!("expected either \"graphical\" or \"headless\", got \"{s}\"")),
+        }
+    }
+}
+
+impl From<bool> for Mode {
+    /// Converts false to headless,  
+    /// Converts true to graphical.  
+    fn from(mode: bool) -> Self {
+        if mode {
+            Mode::Graphical
+        } else {
+            Mode::Headless
         }
     }
 }
@@ -88,14 +97,7 @@ pub fn get_args() -> (EnvironmentSpec, Mode, HashMap<String, String>) {
     env_spec.spec = spec_file;
     // Read the graphics mode.
     let mode = if let Some(mode) = mode {
-        let mode = mode.trim().to_ascii_lowercase();
-        if mode == "graphical" {
-            Mode::Graphical
-        } else if mode == "headless" {
-            Mode::Headless
-        } else {
-            panic!("Argument Error: expected either \"graphical\" or \"headless\", got \"{mode}\"");
-        }
+        mode.parse().unwrap_or_else(|err| panic!("Argument Error: {err}"))
     } else {
         Mode::default()
     };
@@ -118,7 +120,7 @@ pub fn get_args() -> (EnvironmentSpec, Mode, HashMap<String, String>) {
         panic!("Argument Error: odd number of settings, expected key-value pairs");
     }
     //
-    return (env_spec, mode, defaults);
+    (env_spec, mode, defaults)
 }
 
 fn init() {
@@ -160,7 +162,7 @@ fn change_blocking_fd(fd: std::os::unix::io::RawFd, blocking: bool) {
 ///
 /// This function is non-blocking and returns `None` if there are no new
 /// messages. This decodes the JSON messages and returns `Request` objects.
-pub fn poll() -> Result<Option<Request>, JsonIoError> {
+pub fn poll() -> Result<Option<Request>, Error> {
     // Read a line from stdin, non blocking.
     let mut line = String::new();
     if let Err(error) = io::stdin().lock().read_line(&mut line) {
@@ -191,83 +193,74 @@ pub fn poll() -> Result<Option<Request>, JsonIoError> {
     }
 }
 
-fn write_msg(message: &Response) -> Result<(), JsonIoError> {
-    let mut stdout = io::stdout().lock();
-    serde_json::to_writer(&mut stdout, message)?;
-    write!(stdout, "\n")?;
-    Ok(())
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
 }
 
-/// Acknowledge that the given message has been received and successfully acted upon.
-/// The message should have originated from the `poll()` function.
-pub fn ack(message: &Request) -> Result<(), JsonIoError> {
+/// Acknowledge that the given message has been successfully acted upon.
+pub fn ack(message: &Request) {
     // Birth messages don't need to be acknowledged.
     if let Request::Birth { .. } = message {
-        return Ok(());
+        return;
     }
-    write_msg(&Response::Ack { ack: message.clone() })
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer(&mut stdout, message).unwrap();
+    writeln!(stdout).unwrap();
 }
 
 /// Request a new individual from the evolutionary algorithm.
 ///
 /// Argument population is optional if the environment contains exactly one population.
-pub fn new(population: Option<&str>) -> Result<(), JsonIoError> {
-    write_msg(&Response::New {
-        population: population.map(|pop| pop.to_string()).unwrap_or(""),
-    })
+pub fn new(population: Option<&str>) {
+    println!(r#"{{"New":"{}"}}"#, population.unwrap_or(""));
 }
 
 /// Request to mate two specific individuals together to produce a child individual.
-///
-/// Argument population is optional if the environment contains exactly one population.
-pub fn mate(population: Option<&str>, parent1: u64, parent2: u64) -> Result<(), JsonIoError> {
-    write_msg(&Response::Mate { parent1, parent2 })
+pub fn mate(parent1: &str, parent2: &str) {
+    println!(r#"{{"Mate":["{parent1}","{parent2}"]}}"#);
 }
 
 /// Report an individual's score or reproductive fitness to the evolutionary algorithm.
 ///
-/// This should be called *before* calling "death" on the individual.
+/// This should be called *before* calling [death] on the individual.
 ///
-/// Argument population is optional if the environment contains exactly one population.
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn score(population: Option<&str>, individual: Option<u64>, score: f64) -> Result<(), JsonIoError> {
-    write_msg(&Response::Score {
-        population: population.map(|pop| pop.to_string()),
-        individual,
-        score,
-    })
+pub fn score(individual: Option<&str>, value: &str) {
+    println!(r#"{{"Score":"{value}","name":"{}"}}"#, individual.unwrap_or(""));
 }
 
-/// Report arbitrary extraneous information about an individual to the NPC Maker program.
+/// Report extra information about an individual.
 ///
 /// Argument info is a mapping of string key-value pairs.
 ///
-/// Argument population is optional if the environment contains exactly one population.
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn info(
-    population: Option<&str>,
-    individual: Option<u64>,
-    info: HashMap<String, String>,
-) -> Result<(), JsonIoError> {
-    write_msg(&Response::Info {
-        population: population.map(|pop| pop.to_string()),
-        individual,
-        info,
-    })
+pub fn info(individual: Option<&str>, info: &HashMap<String, String>) {
+    let mut json = String::new();
+    for (key, value) in info {
+        json.push('"');
+        json.push_str(key);
+        json.push('"');
+        json.push(':');
+        json.push('"');
+        json.push_str(value);
+        json.push('"');
+        json.push(',');
+    }
+    json.pop(); // Remove trailing comma.
+    println!(r#"{{"Info":{{{json}}},"name":"{}"}}"#, individual.unwrap_or(""));
 }
 
-// Notify the evolutionary algorithm that the given individual has died.
-//
-// If the individual had a score or reproductive fitness then it should be
-// reported using the "score()" function *before* calling this method.
+/// Notify the evolutionary algorithm that the given individual has died.
 ///
-/// Argument population is optional if the environment contains exactly one population.
+/// The individual's score or reproductive fitness should be reported
+/// using the [score()] function *before* calling this method.
+///
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn death(population: Option<&str>, individual: Option<u64>) -> Result<(), JsonIoError> {
-    write_msg(&Response::Death {
-        population: population.map(|pop| pop.to_string()),
-        individual,
-    })
+pub fn death(individual: Option<&str>) {
+    println!(r#"{{"Death":"{}"}}"#, individual.unwrap_or(""));
 }
-
-*/
