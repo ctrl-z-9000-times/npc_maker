@@ -32,6 +32,7 @@ def test_nn():
     x.new(genome)
     x.set_input(0, 42)
     x.advance(0.01)
+    assert x.is_alive()
     assert float(x.get_outputs(0)) < .001
     assert float(x.get_outputs(1)) > .999
     assert float(x.get_outputs(1)) > .999

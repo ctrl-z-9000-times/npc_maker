@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Mutex;
 
 fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf, io::Error> {
     let path = path.as_ref();
@@ -54,8 +55,8 @@ impl Controller {
         let population = population.to_string();
         let program = _clean_path(&command[0])?;
         let environment_path = environment.to_str().unwrap();
-        debug_assert!(!environment_path.contains("\n"));
-        debug_assert!(!population.contains("\n"));
+        debug_assert!(!environment_path.contains('\n'));
+        debug_assert!(!population.contains('\n'));
 
         // Setup and run the controller command in a subprocess.
         let mut cmd = Command::new(&program);
@@ -101,7 +102,7 @@ impl Controller {
     /// Initialize the control system with a new genome.  
     /// This discards the currently loaded model.  
     pub fn new_genome(&mut self, genome: &str) -> Result<(), io::Error> {
-        debug_assert!(!genome.contains("\n"));
+        debug_assert!(!genome.contains('\n'));
         writeln!(self.stdin, "N{genome}")?;
         Ok(())
     }
@@ -120,7 +121,7 @@ impl Controller {
 
     /// Write a single value to a GIN in the controller.
     pub fn set_input(&mut self, gin: u64, value: &str) -> Result<(), io::Error> {
-        debug_assert!(!value.contains("\n"));
+        debug_assert!(!value.contains('\n'));
         writeln!(self.stdin, "I{gin}:{value}")?;
         Ok(())
     }
@@ -158,6 +159,7 @@ impl Controller {
     /// Save the current state of the control system to file.
     pub fn save(&mut self, path: impl AsRef<Path>) -> Result<(), io::Error> {
         let path = path.as_ref().to_str().unwrap();
+        debug_assert!(!path.contains('\n'));
         writeln!(self.stdin, "S{path}")?;
         self.stdin.flush()?;
         Ok(())
@@ -166,7 +168,16 @@ impl Controller {
     ///  Load the state of the control system from file.
     pub fn load(&mut self, path: impl AsRef<Path>) -> Result<(), io::Error> {
         let path = path.as_ref().to_str().unwrap();
+        debug_assert!(!path.contains('\n'));
         writeln!(self.stdin, "L{path}")?;
+        Ok(())
+    }
+
+    /// Send a custom message to the controller using a new message type.
+    pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<(), io::Error> {
+        debug_assert!(!"EPNRXIBOSLQ".contains(message_type));
+        debug_assert!(!message_body.contains('\n'));
+        writeln!(self.stdin, "{message_type}{message_body}")?;
         Ok(())
     }
 
@@ -188,6 +199,7 @@ impl Drop for Controller {
 ///
 /// These messages are transmitted over the controller stdin channel.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum Message {
     Environment { environment: PathBuf },
     Population { population: String },
@@ -199,6 +211,7 @@ pub enum Message {
     GetOutput { gin: u64 },
     Save { path: PathBuf },
     Load { path: PathBuf },
+    Custom { message_type: char, body: String },
     Quit,
 }
 
@@ -226,6 +239,8 @@ impl Message {
 
             Self::Load { path } => writeln!(writer, "L{}", path.to_str().unwrap())?,
 
+            Self::Custom { message_type, body } => writeln!(writer, "{}{}", message_type, body)?,
+
             Self::Quit => writeln!(writer, "Q")?,
         };
         if let Self::SetBinary { bytes, .. } = self {
@@ -244,18 +259,19 @@ impl Message {
         let Some((msg_type, msg_body)) = line.split_at_checked(1) else {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
         };
+        let msg_type = msg_type.chars().next().unwrap().to_ascii_uppercase();
         let msg_data = match msg_type {
-            "E" => Self::Environment {
+            'E' => Self::Environment {
                 environment: msg_body.into(),
             },
-            "P" => Self::Population {
+            'P' => Self::Population {
                 population: msg_body.to_string(),
             },
-            "N" => Self::New {
+            'N' => Self::New {
                 genome: msg_body.to_string(),
             },
-            "R" => Self::Reset,
-            "I" => {
+            'R' => Self::Reset,
+            'I' => {
                 let Some((gin, value)) = msg_body.split_once(":") else {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
                 };
@@ -264,7 +280,7 @@ impl Message {
                     value: value.to_string(),
                 }
             }
-            "B" => {
+            'B' => {
                 let Some((gin, num_bytes)) = msg_body.split_once(":") else {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "error message"));
                 };
@@ -276,18 +292,19 @@ impl Message {
                     bytes,
                 }
             }
-            "X" => Self::Advance {
+            'X' => Self::Advance {
                 dt: msg_body.parse::<f64>().unwrap(),
             },
-            "O" => Self::GetOutput {
+            'O' => Self::GetOutput {
                 gin: msg_body.parse::<u64>().unwrap(),
             },
-            "S" => Self::Save { path: msg_body.into() },
-            "L" => Self::Load { path: msg_body.into() },
-            "Q" => Self::Quit,
-            _ => {
-                return Err(io::Error::new(io::ErrorKind::Unsupported, "error message"));
-            }
+            'S' => Self::Save { path: msg_body.into() },
+            'L' => Self::Load { path: msg_body.into() },
+            'Q' => Self::Quit,
+            _ => Self::Custom {
+                message_type: msg_type,
+                body: msg_body.to_string(),
+            },
         };
         Ok(msg_data)
     }
@@ -299,28 +316,55 @@ impl Message {
 /// with an instance of the implementation to run it as a controller program.
 #[allow(unused_variables)]
 pub trait API {
-    fn new(&mut self, genome: String);
+    /// Discard the current model and load a new one.
+    ///
+    /// The environment and population will not change during the lifetime of
+    /// the controller's computer process.
+    fn new(&mut self, environment: &Path, population: &str, genome: String);
 
+    /// Reset the currently loaded model to it's initial state.
     fn reset(&mut self);
 
+    /// Argument dt is the time period to advance over, measured in seconds.
     fn advance(&mut self, dt: f64);
 
+    /// Receive data from the environment into the controller.
     fn set_input(&mut self, gin: u64, value: String);
 
+    /// Receive an array of bytes from the environment into the controller.
+    ///
+    /// Optional, panics by default.
     fn set_binary(&mut self, gin: u64, bytes: Vec<u8>) {
         panic!("unsupported operation: set_binary")
     }
 
+    /// The environment has requested that the controller send it an output.
     fn get_output(&mut self, gin: u64) -> String;
 
+    /// Save the current state of the controller to file.
+    ///
+    /// Optional, panics by default.
     fn save(&mut self, path: PathBuf) {
         panic!("unsupported operation: save")
     }
 
+    /// Load the state of a controller from file.
+    ///
+    /// Optional, panics by default.
     fn load(&mut self, path: PathBuf) {
         panic!("unsupported operation: load")
     }
 
+    /// Receive a custom message from the controller using a new message type.
+    ///
+    /// Optional, panics by default.
+    fn message(&mut self, message_type: char, message_body: &str) {
+        panic!("unsupported operation: message")
+    }
+
+    /// Optional.
+    ///
+    /// This method is called just before the controller process exits.
     fn quit(&mut self) {}
 }
 
@@ -331,11 +375,15 @@ fn poll() -> Result<Message, io::Error> {
 
 /// Send an output value to the environment, for implementing controllers.
 pub fn output(gin: u64, value: String) -> Result<(), io::Error> {
-    debug_assert!(!value.contains("\n"));
+    debug_assert!(!value.contains('\n'));
     println!("{gin}:{value}");
     io::stdout().flush()?;
     Ok(())
 }
+
+// Store these in global variables so that the main function is can be re-entered in case of error.
+static ENVIRONMENT: Mutex<Option<PathBuf>> = Mutex::new(None);
+static POPULATION: Mutex<Option<String>> = Mutex::new(None);
 
 /// Start a controller's main program loop.
 ///
@@ -348,14 +396,18 @@ pub fn main(mut controller: impl API) -> Result<(), io::Error> {
     loop {
         let message = poll()?;
         match message {
-            Message::Environment { .. } => {
-                todo!()
+            Message::Environment { environment } => {
+                ENVIRONMENT.lock().unwrap().replace(environment);
             }
-            Message::Population { .. } => {
-                todo!()
+            Message::Population { population } => {
+                POPULATION.lock().unwrap().replace(population);
             }
             Message::New { genome } => {
-                controller.new(genome);
+                let environment_lock = ENVIRONMENT.lock().unwrap();
+                let population_lock = POPULATION.lock().unwrap();
+                let environment = environment_lock.as_ref().unwrap();
+                let population = population_lock.as_ref().unwrap();
+                controller.new(environment, population, genome);
             }
             Message::Reset => {
                 controller.reset();
@@ -378,6 +430,9 @@ pub fn main(mut controller: impl API) -> Result<(), io::Error> {
             }
             Message::Load { path } => {
                 controller.load(path);
+            }
+            Message::Custom { message_type, body } => {
+                controller.message(message_type, &body);
             }
             Message::Quit => {
                 controller.quit();
@@ -516,6 +571,11 @@ mod tests {
             //
             Message::Load {
                 path: PathBuf::from("\\tmp\\my_save_file."),
+            },
+            //
+            Message::Custom {
+                message_type: '~',
+                body: "hello custom message".to_string(),
             },
             //
             Message::Quit,

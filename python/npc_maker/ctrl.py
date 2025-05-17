@@ -1,5 +1,5 @@
 """
-Controller API, for making and using control systems.
+Controller Interface, for making and using control systems.
 """
 
 from pathlib import Path
@@ -237,14 +237,21 @@ class API:
     Then call "npc_maker.ctrl.main()" with an instance of your class to
     run an instance of your controller program.
     """
-    def new(self, genome: str):
+    def new(self, environment: 'Path', population: str, genome: str):
         """
         Abstract Method
 
         Discard the current model and load a new one.
 
+        Argument environment is the file-path of the environment specification file.
+
+        Argument population is a key into the environment specification's "populations" table.
+
         Argument genome is the parameters for the new controller.
-        The genome has been decoded from JSON into a python object.
+        The genome has already been decoded from JSON into a python object.
+
+        The environment and population will not change during the lifetime of
+        the controller's computer process.
         """
         raise TypeError("abstract method called")
 
@@ -252,7 +259,7 @@ class API:
         """
         Abstract Method
 
-        Reset the currently loaded model to it's initial state
+        Reset the currently loaded model to it's initial state.
         """
         raise TypeError("abstract method called")
 
@@ -268,7 +275,7 @@ class API:
         """
         Abstract Method
 
-        Send data from the environment to the controller.
+        Receive data from the environment into the controller.
 
         Argument gin references a sensory input interface.
         Argument value is a UTF-8 string.
@@ -279,7 +286,7 @@ class API:
         """
         Abstract Method
 
-        Send an array of bytes from the environment to the controller.
+        Receive an array of bytes from the environment into the controller.
 
         Argument gin references a binary input interface.
         Argument bytes is a byte array.
@@ -290,7 +297,7 @@ class API:
         """
         Abstract Method
 
-        Request for the controller to send an output to the environment.
+        The environment has requested that the controller send it an output.
 
         Argument gin references a motor output interface.
         """
@@ -311,7 +318,7 @@ class API:
         """
         Abstract Method
 
-        Load the state of the controller from file.
+        Load the state of a controller from file.
 
         Argument path is the filesystem path to load from.
         """
@@ -321,7 +328,7 @@ class API:
         """
         Abstract Method
 
-        Send a custom message to the controller using a new message type.
+        Receive a custom message from the controller using a new message type.
 
         Argument message_type is a single capital letter, which is not already
         in use by the protocol.
@@ -370,27 +377,6 @@ def _parse_message():
     msg_type = message[0].upper()
     msg_body = message[1:]
     return (msg_type, msg_body)
-
-def get_args():
-    """
-    Returns pair of (environment, population)
-
-    The environment is the file path of the current environment specification file.
-    The population is a name and a key into the environment spec's "populations" table.
-
-    This information is always available to the controller process
-    and does not change during the controller process's lifetime.
-    """
-    global _environment, _population
-    while _environment is None or _population is None:
-        msg_type, msg_body = _parse_message()
-        if msg_type == "E":
-            _environment = Path(msg_body)
-        elif msg_type == "P":
-            _population = msg_body
-        else:
-            raise RuntimeError("protocol error: missing environment or population")
-    return _environment, _population
 
 def main(controller):
     """
@@ -449,7 +435,7 @@ def main(controller):
 
         elif msg_type == "N":
             genome = json.loads(msg_body)
-            controller.new(genome)
+            controller.new(_environment, _population, genome)
 
         elif msg_type == "E":
             _environment = Path(msg_body)

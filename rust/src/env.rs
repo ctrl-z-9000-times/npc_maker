@@ -1,17 +1,25 @@
-//! Environment Interface, for using and implementing new environments.
+//! Environment Interface, for making and using environments.
 //!
 //! Each environment runs in its own computer process and uses stdin & stdout to
 //! communicate with the evolutionary algorithm and the main NPC Maker program.
 //! Environments should use stderr to report any unformatted or diagnostic messages
 //! (see [eprintln!()]).
 
-use crate::env::{EnvironmentSpec, Request, Response};
-use crate::Error;
+mod messages;
+mod specification;
+
+pub use messages::{Request, Response};
+pub use specification::{EnvironmentSpec, InterfaceSpec, PopulationSpec, SettingsSpec};
+
+/*
+
+use crate::Error as JsonIoError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::os::fd::AsRawFd;
 use std::path::Path;
+use std::str::FromStr;
 
 /// Display mode for environments.
 #[derive(Debug, Default, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
@@ -29,6 +37,28 @@ pub enum Mode {
     ///
     /// The environment should run as quickly and quietly as possible.
     Headless,
+}
+
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mode::Graphical => write!(f, "graphical"),
+            Mode::Headless => write!(f, "headless"),
+        }
+    }
+}
+
+impl FromStr for Mode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "graphical" => Ok(Mode::Graphical),
+            "headless" => Ok(Mode::Headless),
+            _ => Err(()),
+        }
+    }
 }
 
 /// Read the command line arguments for an environment program.
@@ -181,30 +211,26 @@ pub fn ack(message: &Request) -> Result<(), JsonIoError> {
 /// Request a new individual from the evolutionary algorithm.
 ///
 /// Argument population is optional if the environment contains exactly one population.
-pub fn request_new(population: Option<&str>) -> Result<(), JsonIoError> {
+pub fn new(population: Option<&str>) -> Result<(), JsonIoError> {
     write_msg(&Response::New {
-        population: population.map(|pop| pop.to_string()),
+        population: population.map(|pop| pop.to_string()).unwrap_or(""),
     })
 }
 
 /// Request to mate two specific individuals together to produce a child individual.
 ///
 /// Argument population is optional if the environment contains exactly one population.
-pub fn request_mate(population: Option<&str>, parent1: u64, parent2: u64) -> Result<(), JsonIoError> {
-    write_msg(&Response::Mate {
-        population: population.map(|pop| pop.to_string()),
-        parent1,
-        parent2,
-    })
+pub fn mate(population: Option<&str>, parent1: u64, parent2: u64) -> Result<(), JsonIoError> {
+    write_msg(&Response::Mate { parent1, parent2 })
 }
 
 /// Report an individual's score or reproductive fitness to the evolutionary algorithm.
 ///
-/// This should be called *before* calling "report_death" on the individual.
+/// This should be called *before* calling "death" on the individual.
 ///
 /// Argument population is optional if the environment contains exactly one population.
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn report_score(population: Option<&str>, individual: Option<u64>, score: f64) -> Result<(), JsonIoError> {
+pub fn score(population: Option<&str>, individual: Option<u64>, score: f64) -> Result<(), JsonIoError> {
     write_msg(&Response::Score {
         population: population.map(|pop| pop.to_string()),
         individual,
@@ -218,7 +244,7 @@ pub fn report_score(population: Option<&str>, individual: Option<u64>, score: f6
 ///
 /// Argument population is optional if the environment contains exactly one population.
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn report_info(
+pub fn info(
     population: Option<&str>,
     individual: Option<u64>,
     info: HashMap<String, String>,
@@ -233,13 +259,15 @@ pub fn report_info(
 // Notify the evolutionary algorithm that the given individual has died.
 //
 // If the individual had a score or reproductive fitness then it should be
-// reported using the "report_score()" function *before* calling this method.
+// reported using the "score()" function *before* calling this method.
 ///
 /// Argument population is optional if the environment contains exactly one population.
 /// Argument individual is optional if the environment contains exactly one individual.
-pub fn report_death(population: Option<&str>, individual: Option<u64>) -> Result<(), JsonIoError> {
+pub fn death(population: Option<&str>, individual: Option<u64>) -> Result<(), JsonIoError> {
     write_msg(&Response::Death {
         population: population.map(|pop| pop.to_string()),
         individual,
     })
 }
+
+*/

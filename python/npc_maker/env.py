@@ -1,5 +1,5 @@
 """
-Environment API, for making and using environments.
+Environment Interface, for making and using environments.
 
 All global functions in this module are for implementing environment programs.
 """
@@ -906,7 +906,7 @@ class SoloAPI:
         pass
 
     @classmethod
-    def main(cls, buffer=20):
+    def main(cls, buffer=1):
         """
         Run the environment program.
 

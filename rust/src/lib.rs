@@ -1,24 +1,13 @@
 //!
 
 pub mod ctrl;
+pub mod env;
 
-// mod env_api;
-mod env_spec;
-mod messages;
-
-pub mod env {
-    // pub use crate::env_api::{ack, death, get_args, info, mate, new, poll, score, Mode};
-    pub use crate::env_spec::{EnvironmentSpec, InterfaceSpec, PopulationSpec, SettingsSpec};
-    pub use crate::messages::{Request, Response};
-}
-
-/*
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[error("{}")]
+    #[error("{0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("{}")]
+    #[error("{0}")]
     Io(#[from] std::io::Error),
 }
-*/

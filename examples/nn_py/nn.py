@@ -20,7 +20,7 @@ def logistic(value, slope=1, midpoint=0):
     return 1.0 / (1.0 + e)
 
 class NN(ctrl.API):
-    def new(self, genotype):
+    def new(self, environment, population, genotype):
         self.names      = {}
         self.states     = []
         self.slopes     = []
