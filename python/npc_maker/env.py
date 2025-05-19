@@ -436,12 +436,12 @@ class Environment:
         self._process.stdin.write(f'{{"Load":"{path}"}}\n'.encode('utf-8'))
         self._process.stdin.flush()
 
-    def send(self, message):
+    def custom(self, message):
         """
-        Send an arbitrary JSON message to the environment.
+        Send a user defined JSON message to the environment.
         """
         message = json.dumps(message)
-        self._process.stdin.write(f'{{"Message":{message}}}\n'.encode('utf-8'))
+        self._process.stdin.write(f'{{"Custom":{message}}}\n'.encode('utf-8'))
         self._process.stdin.flush()
 
     def _birth(self, individual, parents):
@@ -551,7 +551,7 @@ class Environment:
                 elif inner == "Quit":       self.on_quit()
                 elif "Save" in inner:       self.on_save(inner["Save"])
                 elif "Load" in inner:       self.on_load(inner["Load"])
-                elif "Message" in inner:    self.on_message(inner["Message"])
+                elif "Custom" in inner:     self.on_message(inner["Custom"])
                 elif "Birth" in inner:      pass
                 else:
                     raise ValueError(f'unrecognized message "{message}"')
@@ -596,7 +596,7 @@ class Environment:
         Callback hook for subclasses to implement.
         Triggered by "ack" responses.
         """
-    def on_message(self, message):
+    def on_custom(self, message):
         """
         Callback hook for subclasses to implement.
         Triggered by "ack" responses.
@@ -776,7 +776,7 @@ def ack(message):
     if "Birth" in message:
         pass # Birth messages shouldn't be acknowledged.
     else:
-        assert message in ("Heartbeat","Load","Message","Pause","Quit","Resume","Save","Start","Stop")
+        assert message in ("Custom","Heartbeat","Load","Pause","Quit","Resume","Save","Start","Stop")
         response = json.dumps({"Ack": message})
         _try_print(response)
 
@@ -896,6 +896,14 @@ class SoloAPI:
         """
         raise TypeError("abstract method called")
 
+    def custom(self, message):
+        """
+        Abstract Method
+
+        Receive a user defined message.
+        """
+        raise TypeError("abstract method called")
+
     def quit(self):
         """
         Abstract Method, Optional
@@ -949,6 +957,10 @@ class SoloAPI:
 
                 elif "Birth" in request:
                     queue.append(request["Birth"])
+
+                elif "Custom" in request:
+                    self.custom(request["Custom"])
+                    ack(request)
 
                 elif request == "Stop":
                     state = "Stop"

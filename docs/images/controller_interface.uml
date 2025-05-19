@@ -21,7 +21,7 @@ frame "The Environment Process" as env_proc {
     * get_outputs(gin_list) -> values
     * save(path)
     * load(path)
-    * message(type, message)
+    * custom(type, message)
     * quit()
   ]
 
@@ -64,7 +64,7 @@ frame "The Controller Sub-Process" as ctrl_proc {
     * get_output(gin) -> value
     * save(path)
     * load(path)
-    * message(type, message)
+    * custom(type, message)
     * quit()
   ]
 

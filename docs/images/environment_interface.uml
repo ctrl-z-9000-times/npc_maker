@@ -32,7 +32,7 @@ frame "The Management Process" as mgmt_proc {
       * resume()
       * save(path)
       * load(path)
-      * send(message)
+      * custom(message)
       * quit()
     ]
     
@@ -50,7 +50,7 @@ frame "The Management Process" as mgmt_proc {
       * on_quit()
       * on_save(path)
       * on_load(path)
-      * on_message(message)
+      * on_custom(message)
     ]
 
     instance_init -[hidden] instance_commands
@@ -109,7 +109,7 @@ frame "The Environment Subprocess" as env_proc {
     ** "Quit"
     ** {"Save": "PATH"}
     ** {"Load": "PATH"}
-    ** {"Message": JSON}
+    ** {"Custom": JSON}
     ** {"Birth": {
           "name": "UUID",
           "parents": ["UUID", "UUID"],

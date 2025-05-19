@@ -68,7 +68,7 @@ pub enum Request {
     },
 
     /// Send a user defined message to the environment.
-    Message(serde_json::Value),
+    Custom(serde_json::Value),
 }
 
 /// Structure of all messages sent from the environment instances to the NPC Maker.
@@ -132,6 +132,7 @@ mod tests {
             Request::Load("./my_save.json".to_string()),
             Request::Quit,
             Request::Birth {
+                environment: " ".to_string(),
                 population: "pop1".to_string(),
                 name: "42".to_string(),
                 controller: vec![
@@ -144,6 +145,7 @@ mod tests {
                 parents: vec!["qewrty".to_string(), "".to_string()],
             },
             Request::Birth {
+                environment: "env1 2 3".to_string(),
                 population: "pop1".to_string(),
                 name: "43".to_string(),
                 controller: vec![],
@@ -241,6 +243,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&Request::Birth {
+                environment: "env1".to_string(),
                 population: "pop1".to_string(),
                 name: "1234".to_string(),
                 controller: vec!["/usr/bin/q".to_string()],
@@ -253,11 +256,11 @@ mod tests {
                 parents: vec!["1020".to_string(), "1077".to_string()],
             })
             .unwrap(),
-            r#"{"Birth":{"population":"pop1","name":"1234","controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}],"parents":["1020","1077"]}}"#
+            r#"{"Birth":{"environment":"env1","population":"pop1","name":"1234","controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}],"parents":["1020","1077"]}}"#
         );
         assert_eq!(
-            serde_json::to_string(&Request::Message(serde_json::json!({"foo":"bar"}))).unwrap(),
-            r#"{"Message":{"foo":"bar"}}"#
+            serde_json::to_string(&Request::Custom(serde_json::json!({"foo":"bar"}))).unwrap(),
+            r#"{"Custom":{"foo":"bar"}}"#
         );
     }
 

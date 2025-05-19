@@ -174,7 +174,7 @@ send the corresponding "Ack" response unprompted to inform the management progra
 | Load | Management | Environment | Discard the current state of the environment and load a previously saved state from the given filesystem path |
 | Quit | Management | Environment | Demand the environment shut down and exit as fast as possible. Do not finish any work in progress and do not save any data. The environment will not be resumed. Further messages sent to management will be ignored |
 | Ack | Environment | Management | Signal that the environment is now in the given state, or that the given command has been completed |
-| Message | Management | Environment | Send a user defined message to the environment |
+| Custom | Management | Environment | Send a user defined message to the environment |
 
 Environment programs should initialize to the "Stopped" state.
 
@@ -221,12 +221,12 @@ Words in ALL-CAPS are placeholders for runtime data.
 | :------------- |
 | `{"Ack":MESSAGE}\n` |
 | `{"Birth":{"environment":"ENVIRONMENT","population":"POPULATION","name":"UUID","controller":["COMMAND"],"genome":GENOME,"parents":["UUID"]}}\n` |
+| `{"Custom":JSON}\n` |
 | `{"Death":"UUID"}\n` |
 | `"Heartbeat"\n` |
 | `{"Info":{"KEY":"VALUE"},"name":"UUID"}\n` |
 | `{"Load":"PATH"}\n` |
 | `{"Mate":["UUID","UUID"]}\n` |
-| `{"Message":JSON}\n` |
 | `{"New":"POPULATION"}\n` |
 | `"Pause"\n` |
 | `"Quit"\n` |

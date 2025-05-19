@@ -359,8 +359,8 @@ pub trait API {
     /// Receive a custom message from the controller using a new message type.
     ///
     /// Optional, panics by default.
-    fn message(&mut self, message_type: char, message_body: &str) {
-        panic!("unsupported operation: message")
+    fn custom(&mut self, message_type: char, message_body: &str) {
+        panic!("unsupported operation: custom")
     }
 
     /// Optional.
@@ -444,7 +444,7 @@ pub fn main(mut controller: impl API) -> Result<()> {
                 controller.load(path);
             }
             Message::Custom { message_type, body } => {
-                controller.message(message_type, &body);
+                controller.custom(message_type, &body);
             }
             Message::Quit => {
                 controller.quit();

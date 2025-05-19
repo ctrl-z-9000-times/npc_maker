@@ -45,6 +45,12 @@ def _clean_ctrl_command(command):
             command[index] = str(arg)
     return command
 
+# TODO: Make a new version of Controller.get_outputs that is split into
+# request/receive phases so that users can get outputs from many controllers
+# all at once.
+
+# TODO: Add a timeout for reading from the controller's stdin.
+
 class Controller:
     """
     An instance of a controller.
@@ -153,11 +159,6 @@ class Controller:
         self._ctrl.stdin.write("B{}:{}\n".format(gin, len(binary)).encode("utf-8"))
         self._ctrl.stdin.write(binary)
 
-    # TODO: Make a new version of get_outputs that is split into request/receive phases
-    #       so that users can get outputs from many controllers all at once.
-
-    # TODO: Add a timeout for reading from the controller's stdin.
-
     def get_outputs(self, gin_list):
         """
         Retrieve a list of outputs, as identified by their GIN.
@@ -205,7 +206,7 @@ class Controller:
         path = Path(path)
         self._ctrl.stdin.write("L{}\n".format(path).encode("utf-8"))
 
-    def message(self, message_type, message_body):
+    def custom(self, message_type, message_body):
         """
         Send a custom message to the controller using a new message type.
         """
@@ -327,7 +328,7 @@ class API:
         """
         raise TypeError("unsupported operation")
 
-    def message(self, message_type: str, message_body: str):
+    def custom(self, message_type: str, message_body: str):
         """
         Abstract Method
 
@@ -488,4 +489,4 @@ def main(controller):
             break
 
         else:
-            controller.message(msg_type, msg_body)
+            controller.custom(msg_type, msg_body)
