@@ -6,6 +6,8 @@
     license = "MIT-0"
     description = "Evolve AIs in simulated environments"
     repository = "https://github.com/ctrl-z-9000-times/npc_maker"
+    categories = ["science"]
+    keywords = ["ai", "alife", "evolution"]
 
 [lib]
     doctest = false
