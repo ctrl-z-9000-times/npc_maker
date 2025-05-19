@@ -1015,7 +1015,7 @@ class SoloAPI:
                         controller = npc_maker.ctrl.Controller(env_spec, population, command)
                         cache[tuple(command)] = controller
                     assert controller.is_alive()
-                    controller.new(genome)
+                    controller.genome(genome)
 
                 # Advance Controller One Step.
                 if controller is not None:

@@ -1,12 +1,11 @@
 # The Controller Interface #
 
 This chapter describes the interface between the environments and the control
-systems for the agents inside of them. The interface is designed to be
-error-tolerant, flexible and, to facilitate interoperability between software
-modules which were developed in isolation. Users can implement custom control
-systems using this interface. Implementations of the controller interface are
-referred to as "**controllers**". Each controller is its own distinct computer
-program, which executes in its own computer process and communicates with the
+systems for the agents inside of them. The interface is designed to be flexible
+and error-tolerant. Users can implement custom control systems using this
+interface. Implementations of the controller interface are referred to
+as "**controllers**". Each controller is its own distinct computer program,
+which executes in its own computer process and communicates with the
 environment over its standard I/O channels in plain text.
 
 
@@ -36,14 +35,14 @@ specifications.
 | :------------ | :------------- | :-------- | ----------- |
 | Environment | `E[ENV_SPEC]\n` | `[ENV_SPEC]` is the filesystem path of the environment specification file | This message is always sent exactly once at the controller's startup, before any other messages |
 | Population | `P[POPULATION]\n` | `[POPULATION]` is a name and a key into the environment specification's "populations" table | This message is always sent exactly once at the controller's startup, before any other messages |
-| New Controller | `N[GENOME]\n` | `[GENOME]` are the parameters for the new controller. The genome is a JSON object | Discard the current model and load a new one |
-| Reset Controller | `R\n` |  | Reset the currently loaded model to it's initial state |
-| Advance Controller | `X[DT]\n` | `[DT]` is the time period to advance over, measured in seconds |  |
-| Set Input | `I[GIN]:[VALUE]\n` | `[GIN]` references a sensory input interface. `[VALUE]` is a UTF-8 string. | Send data from the environment to the controller |
-| Set Binary Input   | `B[GIN]:[NUM]\n`<br>`[BYTES]` | `[GIN]` references a binary input interface. `[BYTES]` is a byte array of length `[NUM]`. It must be read in binary mode | Send an array of bytes from the environment to the controller |
+| Genome | `G[GENOME]\n` | `[GENOME]` are the parameters for the new controller. The genome is a UTF-8 string, occupying a single line | Discard the current model and load a new one |
+| Reset | `R\n` |  | Reset the currently loaded model to it's initial state |
+| Advance | `X[DT]\n` | `[DT]` is the time period to advance over, measured in seconds |  |
+| Set Input | `I[GIN]:[VALUE]\n` | `[GIN]` references a sensory input interface. `[VALUE]` is a UTF-8 string | Send data from the environment to the controller |
+| Set Binary Input   | `B[GIN]:[NUM]\n`<br>`[BYTES]` | `[GIN]` references a binary sensory input interface. `[BYTES]` is a byte array of length `[NUM]`. It must be read in binary mode | Send an array of bytes from the environment to the controller |
 | Get Output | `O[GIN]\n` | `[GIN]` references a motor output interface | Request for the controller to send an output to the environment |
-| Save Controller | `S[PATH]\n` | `[PATH]` is the filesystem path to save to. If the file already exists then overwrite it. The parent directory will always exist | Save the current state of the controller to file |
-| Load Controller | `L[PATH]\n` | `[PATH]` is the filesystem path to load from | Load the state of the controller from file |
+| Save | `S[PATH]\n` | `[PATH]` is the filesystem path to save to. If the file already exists then overwrite it. The parent directory will always exist | Save the current state of the controller to file |
+| Load | `L[PATH]\n` | `[PATH]` is the filesystem path to load from | Load the state of the controller from file |
 | Custom Message | `[TYPE][MESSAGE]\n` | `[TYPE]` is a single capital letter, which is not already in use by the protocol. `[MESSAGE]` may be any UTF-8 string | Send a custom message to the controller using a new message type |
 | Quit | `Q\n` |  | Stop running the controller process. Exit as soon as possible |
 

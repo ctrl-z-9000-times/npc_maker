@@ -53,7 +53,7 @@ fn main() {
 
             Request::Heartbeat | Request::Stop | Request::Pause => env::ack(&request),
 
-            Request::Save(_) | Request::Load(_) | Request::Message(_) => {
+            Request::Save(_) | Request::Load(_) | Request::Custom(_) => {
                 // Save/Load are unimplemented for this environment, do nothing.
             }
 
@@ -76,7 +76,7 @@ fn main() {
                 let ctrl = ctrl.as_mut().unwrap();
 
                 let genome = serde_json::to_string(&genome).unwrap();
-                ctrl.new_genome(&genome).unwrap();
+                ctrl.genome(&genome).unwrap();
                 let score = xor_test(ctrl, mode == env::Mode::Graphical);
                 env::score(Some(&name), &score.to_string());
                 env::death(Some(&name));

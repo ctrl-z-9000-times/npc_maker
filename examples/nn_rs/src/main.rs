@@ -2,6 +2,7 @@
 //!
 //! This file demonstrates how to implement a control system for the NPC Maker.
 
+use npc_maker::ctrl::API;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -50,13 +51,13 @@ struct NeuralNetwork {
     edges: Vec<(u64, u64, f64)>,
 }
 
-impl npc_maker::ctrl::API for NeuralNetwork {
-    fn new(&mut self, _env: &std::path::Path, _pop: &str, genotype: String) {
+impl API for NeuralNetwork {
+    fn genome(&mut self, _env: &std::path::Path, _pop: &str, genome: String) {
         //
-        let mut genotype: Vec<Chromosome> = serde_json::from_str(&genotype).unwrap();
-        genotype.sort_unstable_by_key(|x| x.name());
+        let mut genome: Vec<Chromosome> = serde_json::from_str(&genome).unwrap();
+        genome.sort_unstable_by_key(|x| x.name());
         //
-        self.names = genotype
+        self.names = genome
             .iter()
             .enumerate()
             .filter_map(|(idx, chrom)| match chrom {
@@ -65,7 +66,7 @@ impl npc_maker::ctrl::API for NeuralNetwork {
             })
             .collect();
         //
-        self.nodes = genotype
+        self.nodes = genome
             .iter()
             .filter_map(|chrom| match chrom {
                 Chromosome::Node {
@@ -77,7 +78,7 @@ impl npc_maker::ctrl::API for NeuralNetwork {
         //
         self.state = vec![0.0; self.nodes.len()];
         //
-        self.edges = genotype
+        self.edges = genome
             .iter()
             .filter_map(|chrom| match chrom {
                 Chromosome::Node { .. } => None,
@@ -116,5 +117,5 @@ impl npc_maker::ctrl::API for NeuralNetwork {
 }
 
 fn main() {
-    npc_maker::ctrl::main(NeuralNetwork::default()).unwrap();
+    NeuralNetwork::default().main().unwrap();
 }

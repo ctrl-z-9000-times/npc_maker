@@ -13,7 +13,7 @@ frame "The Environment Process" as env_proc {
     * stderr
     
     .. // methods // ..
-    * new(genome)
+    * genome(value)
     * reset()
     * advance(dt)
     * set_input(gin, value)
@@ -44,19 +44,19 @@ frame "The Controller Sub-Process" as ctrl_proc {
     
     1| env_spec, pop = npc_maker.ctrl.get_args()
     2| controller = MyController()
-    3| npc_maker.ctrl.main_loop(controller)
+    3| controller.main()
   ]
 
   component main_loop <<functions>> [
     
-    * npc_maker.ctrl.main_loop(controller)
+    * npc_maker.ctrl.API.main(controller)
   ]
 
   component API <<abstract class>> [
     **npc_maker.ctrl.API**
     
     .. // abstract methods // ..
-    * new(genome)
+    * genome(value)
     * reset()
     * advance(dt)
     * set_input(gin, value)

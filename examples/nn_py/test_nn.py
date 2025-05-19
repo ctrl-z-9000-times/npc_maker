@@ -31,7 +31,7 @@ def test_nn():
     for ctrl_prog in [ctrl_prog_py, ctrl_prog_rs]:
         print(ctrl_prog)
         x = Controller("my_env", "my_pop", [ctrl_prog])
-        x.new(genome)
+        x.genome(genome)
         x.set_input(0, 42)
         x.advance(0.01)
         assert x.is_alive()

@@ -4,7 +4,6 @@ Controller Interface, for making and using control systems.
 
 from pathlib import Path
 import errno
-import json
 import shlex
 import subprocess
 import sys
@@ -14,8 +13,6 @@ __all__ = (
     "API",
     "Controller",
     "eprint",
-    "get_args",
-    "main",
 )
 
 def eprint(*args, **kwargs):
@@ -24,7 +21,7 @@ def eprint(*args, **kwargs):
 
     The NPC Maker uses the controller's stdin & stdout for communication using a
     standardized message protocol. Unformatted diagnostic and error messages
-    should be written to stderr with this function.
+    should be written to stderr using this function.
     """
     print(*args, **kwargs, file=sys.stderr, flush=True)
 
@@ -112,16 +109,16 @@ class Controller:
     def __repr__(self):
         return "<npc_maker.env_api.Instance: {}>".format(repr(self.get_command()))
 
-    def new(self, genome):
+    def genome(self, value):
         """
         Initialize the control system with a new genome.
         This discards the currently loaded model.
 
-        The genome should already be encoded as a JSON string:
-        >>> import json
-        >>> genome = json.dumps(genome)
+        Argument value is a string occupying a single line
         """
-        self._ctrl.stdin.write("N{}\n".format(genome).encode("utf-8"))
+        value = str(value)
+        assert '\n' not in value
+        self._ctrl.stdin.write("G{}\n".format(value).encode("utf-8"))
 
     def reset(self):
         """
@@ -212,7 +209,9 @@ class Controller:
         """
         message_type = str(message_type).strip().upper()
         assert len(message_type) == 1
-        assert message_type not in "EPNRXIBOSLQ"
+        assert message_type not in "EPGRXIBOSLQ"
+        message_body = str(message_body)
+        assert '\n' not in message_body
         self._ctrl.stdin.write("{}{}\n".format(message_type, message_body).encode("utf-8"))
 
     def quit(self):
@@ -233,15 +232,143 @@ class Controller:
                 if error.errno == errno.EPIPE:
                     pass
 
+_stdin       = None
+_buffer      = b""
+_environment = None
+_population  = None
+
+def _readline():
+    global _stdin, _buffer
+    read_size = 1000
+    if _stdin is None:
+        _stdin = open(sys.stdin.fileno(),  mode='rb', buffering=0)
+    if b"\n" not in _buffer:
+        while True:
+            chunk = _stdin.read(read_size)
+            # Yield execution if waiting for data.
+            if chunk is None:
+                time.sleep(0)
+                continue
+            # Check for EOF.
+            if len(chunk) == 0:
+                raise EOFError("stdin closed")
+            # Incorporate the chunk into our internal buffer.
+            _buffer += chunk
+            if b"\n" in chunk:
+                break
+    line, _buffer = _buffer.split(b"\n", maxsplit=1)
+    line = line.decode("utf-8")
+    return line
+
+def _readbytes(num_bytes):
+    global _stdin, _buffer
+    while len(_buffer) < num_bytes:
+        chunk = _stdin.read(num_bytes - len(_buffer))
+        # Yield execution if waiting for data.
+        if chunk is None:
+            time.sleep(0)
+            continue
+        # Check for EOF.
+        if len(chunk) == 0:
+            raise EOFError("stdin closed")
+        _buffer += chunk
+    data    = _buffer[:num_bytes]
+    _buffer = _buffer[num_bytes:]
+    return data
+
+def _parse_message():
+    # Ignore leading white space and empty lines.
+    while True:
+        message = _readline()
+        message = message.lstrip()
+        if message:
+            break
+        # 
+    msg_type = message[0].upper()
+    msg_body = message[1:]
+    return (msg_type, msg_body)
+
 class API:
     """
     Abstract class for implementing controllers.
-
-    Controllers should inherit from this class and implement all of its methods.
-    Then call "npc_maker.ctrl.main()" with an instance of your class to
-    run an instance of your controller program.
     """
-    def new(self, environment: 'Path', population: str, genome: str):
+    def main(self):
+        """
+        Run a controller program.
+
+        This function handles communications between the controller (this program)
+        and the environment, which execute in separate computer processes and
+        communicate over the controller's standard I/O channels.
+
+        This function never returns!
+        """
+        global _stdin, _environment, _population
+        while True:
+            try:
+                msg_type, msg_body = _parse_message()
+            except EOFError:
+                break
+
+            if msg_type == "I":
+                gin, value = msg_body.split(":", maxsplit=1)
+                gin = int(gin)
+                self.set_input(gin, value)
+
+            elif msg_type == "O":
+                gin   = int(msg_body)
+                value = str(self.get_output(gin))
+                assert '\n' not in value
+                reply = f"{gin}:{value}"
+                try:
+                    print(reply, flush=True)
+                except ValueError:
+                    if sys.stdout.closed:
+                        break
+                    else:
+                        raise
+
+            elif msg_type == "B":
+                gin, num_bytes  = msg_body.split(":")
+                gin             = int(gin)
+                num_bytes       = int(num_bytes)
+                try:
+                    binary      = _readbytes(num_bytes)
+                except EOFError:
+                    break
+                self.set_binary(gin, binary)
+
+            elif msg_type == "X":
+                dt = float(msg_body)
+                self.advance(dt)
+
+            elif msg_type == "R":
+                self.reset()
+
+            elif msg_type == "G":
+                self.genome(_environment, _population, msg_body)
+
+            elif msg_type == "E":
+                _environment = Path(msg_body)
+
+            elif msg_type == "P":
+                _population = msg_body
+
+            elif msg_type == "S":
+                save_path = Path(msg_body)
+                self.load(save_path)
+
+            elif msg_type == "L":
+                load_path = Path(msg_body)
+                self.load(load_path)
+
+            elif msg_type == "Q":
+                self.quit()
+                break
+
+            else:
+                self.custom(msg_type, msg_body)
+
+    def genome(self, environment: 'Path', population: str, value: str):
         """
         Abstract Method
 
@@ -251,8 +378,7 @@ class API:
 
         Argument population is a key into the environment specification's "populations" table.
 
-        Argument genome is the parameters for the new controller.
-        The genome has already been decoded from JSON into a python object.
+        Argument value is the parameters for the new controller.
 
         The environment and population will not change during the lifetime of
         the controller's computer process.
@@ -348,145 +474,3 @@ class API:
         This method is called just before the controller process exits.
         """
         pass
-
-_stdin       = None
-_buffer      = b""
-_environment = None
-_population  = None
-
-def _readline():
-    global _stdin, _buffer
-    read_size = 1000
-    if _stdin is None:
-        _stdin = open(sys.stdin.fileno(),  mode='rb', buffering=0)
-    if b"\n" not in _buffer:
-        while True:
-            chunk = _stdin.read(read_size)
-            # Yield execution if waiting for data.
-            if chunk is None:
-                time.sleep(0)
-                continue
-            # Check for EOF.
-            if len(chunk) == 0:
-                raise EOFError("stdin closed")
-            # Incorporate the chunk into our internal buffer.
-            _buffer += chunk
-            if b"\n" in chunk:
-                break
-    line, _buffer = _buffer.split(b"\n", maxsplit=1)
-    line = line.decode("utf-8")
-    return line
-
-def _readbytes(num_bytes):
-    global _stdin, _buffer
-    while len(_buffer) < num_bytes:
-        chunk = _stdin.read(num_bytes - len(_buffer))
-        # Yield execution if waiting for data.
-        if chunk is None:
-            time.sleep(0)
-            continue
-        # Check for EOF.
-        if len(chunk) == 0:
-            raise EOFError("stdin closed")
-        _buffer += chunk
-    data    = _buffer[:num_bytes]
-    _buffer = _buffer[num_bytes:]
-    return data
-
-def _parse_message():
-    # Ignore leading white space and empty lines.
-    while True:
-        message = _readline()
-        message = message.lstrip()
-        if message:
-            break
-        # 
-    msg_type = message[0].upper()
-    msg_body = message[1:]
-    return (msg_type, msg_body)
-
-def main(controller):
-    """
-    Run a controller program.
-
-    Argument controller implements the controller interface: "npc_maker.ctrl.API"
-
-    This function handles communications between the controller (this program)
-    and the environment, which execute in separate computer processes and
-    communicate over the controller's standard I/O channels.
-
-    This function never returns!
-
-    Example Usage:
-    >>> if __name__ == "__main__":
-    >>>     npc_maker.ctrl.main( MyController() )
-    """
-    global _stdin, _environment, _population
-    if type(controller) is type and issubclass(controller, API):
-        controller = controller()
-    assert isinstance(controller, API)
-    while True:
-        try:
-            msg_type, msg_body = _parse_message()
-        except EOFError:
-            break
-
-        if msg_type == "I":
-            gin, value = msg_body.split(":", maxsplit=1)
-            gin = int(gin)
-            controller.set_input(gin, value)
-
-        elif msg_type == "O":
-            gin   = int(msg_body)
-            value = str(controller.get_output(gin))
-            assert '\n' not in value
-            reply = f"{gin}:{value}"
-            try:
-                print(reply, flush=True)
-            except ValueError:
-                if sys.stdout.closed:
-                    break
-                else:
-                    raise
-
-        elif msg_type == "B":
-            gin, num_bytes  = msg_body.split(":")
-            gin             = int(gin)
-            num_bytes       = int(num_bytes)
-            try:
-                binary      = _readbytes(num_bytes)
-            except EOFError:
-                break
-            controller.set_binary(gin, binary)
-
-        elif msg_type == "X":
-            dt = float(msg_body)
-            controller.advance(dt)
-
-        elif msg_type == "R":
-            controller.reset()
-
-        elif msg_type == "N":
-            genome = json.loads(msg_body)
-            controller.new(_environment, _population, genome)
-
-        elif msg_type == "E":
-            _environment = Path(msg_body)
-
-        elif msg_type == "P":
-            _population = msg_body
-
-        elif msg_type == "S":
-            save_path = Path(msg_body)
-            controller.load(save_path)
-
-        elif msg_type == "L":
-            load_path = Path(msg_body)
-            controller.load(load_path)
-
-        elif msg_type == "Q":
-            controller.quit()
-            break
-
-        else:
-            controller.custom(msg_type, msg_body)

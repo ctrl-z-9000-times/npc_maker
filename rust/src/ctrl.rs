@@ -101,9 +101,11 @@ impl Controller {
 
     /// Initialize the control system with a new genome.  
     /// This discards the currently loaded model.  
-    pub fn new_genome(&mut self, genome: &str) -> Result<()> {
-        debug_assert!(!genome.contains('\n'));
-        writeln!(self.stdin, "N{genome}")?;
+    ///
+    /// Argument value must be a single line.  
+    pub fn genome(&mut self, value: &str) -> Result<()> {
+        debug_assert!(!value.contains('\n'));
+        writeln!(self.stdin, "G{value}")?;
         Ok(())
     }
 
@@ -175,7 +177,8 @@ impl Controller {
 
     /// Send a custom message to the controller using a new message type.
     pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<()> {
-        debug_assert!(!"EPNRXIBOSLQ".contains(message_type));
+        debug_assert!(message_type == message_type.to_ascii_uppercase());
+        debug_assert!(!"EPGRXIBOSLQ".contains(message_type));
         debug_assert!(!message_body.contains('\n'));
         writeln!(self.stdin, "{message_type}{message_body}")?;
         Ok(())
@@ -199,11 +202,10 @@ impl Drop for Controller {
 ///
 /// These messages are transmitted over the controller stdin channel.
 #[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
 pub enum Message {
     Environment { environment: PathBuf },
     Population { population: String },
-    New { genome: String },
+    Genome { value: String },
     Reset,
     Advance { dt: f64 },
     SetInput { gin: u64, value: String },
@@ -223,7 +225,7 @@ impl Message {
 
             Self::Population { population } => writeln!(writer, "P{population}")?,
 
-            Self::New { genome } => writeln!(writer, "N{genome}")?,
+            Self::Genome { value } => writeln!(writer, "G{value}")?,
 
             Self::Reset => writeln!(writer, "R")?,
 
@@ -268,8 +270,8 @@ impl Message {
             'P' => Self::Population {
                 population: msg_body.to_string(),
             },
-            'N' => Self::New {
-                genome: msg_body.to_string(),
+            'G' => Self::Genome {
+                value: msg_body.to_string(),
             },
             'R' => Self::Reset,
             'I' => {
@@ -311,17 +313,102 @@ impl Message {
     }
 }
 
+/// Wait for the next message from the environment, for implementing controllers.
+fn poll() -> Result<Message> {
+    Message::read(&mut std::io::stdin().lock())
+}
+
+/// Send an output value to the environment, for implementing controllers.
+fn output(gin: u64, value: String) -> Result<()> {
+    debug_assert!(!value.contains('\n'));
+    println!("{gin}:{value}");
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
+// Store these in global variables so that the main function is can be re-entered in case of error.
+static ENVIRONMENT: Mutex<Option<PathBuf>> = Mutex::new(None);
+static POPULATION: Mutex<Option<String>> = Mutex::new(None);
+
 /// Interface for implementing controllers.
-///
-/// Controllers should implement this trait. Call "npc_maker::ctrl::main_loop()"
-/// with an instance of the implementation to run it as a controller program.
 #[allow(unused_variables)]
 pub trait API {
+    /// Run a controller program.
+    ///
+    /// This method handles communications between the controller (this program) and
+    /// the environment. It reads and parses messages from stdin, interfaces with
+    /// your implementation of the API trait, and writes messages to stdout.
+    ///
+    /// This method never returns!
+    fn main(&mut self) -> Result<()> {
+        loop {
+            let message = poll()?;
+            match message {
+                Message::Environment { environment } => {
+                    ENVIRONMENT.lock().unwrap().replace(environment);
+                }
+                Message::Population { population } => {
+                    POPULATION.lock().unwrap().replace(population);
+                }
+                Message::Genome { value } => {
+                    // Wait for the locks.
+                    let environment_lock = ENVIRONMENT.lock().unwrap();
+                    let population_lock = POPULATION.lock().unwrap();
+                    // Borrow the data.
+                    let environment = environment_lock.as_ref();
+                    let population = population_lock.as_ref();
+                    // Fill in missing values.
+                    let environment = match environment {
+                        Some(ref_path_buf) => ref_path_buf.as_path(),
+                        None => Path::new(""),
+                    };
+                    let population = match population {
+                        Some(ref_string) => ref_string.as_str(),
+                        None => "",
+                    };
+                    self.genome(environment, population, value);
+                }
+                Message::Reset => {
+                    self.reset();
+                }
+                Message::Advance { dt } => {
+                    self.advance(dt);
+                }
+                Message::SetInput { gin, value } => {
+                    self.set_input(gin, value);
+                }
+                Message::SetBinary { gin, bytes } => {
+                    self.set_binary(gin, bytes);
+                }
+                Message::GetOutput { gin } => {
+                    let value = self.get_output(gin);
+                    output(gin, value)?;
+                }
+                Message::Save { path } => {
+                    self.save(path);
+                }
+                Message::Load { path } => {
+                    self.load(path);
+                }
+                Message::Custom { message_type, body } => {
+                    self.custom(message_type, &body);
+                }
+                Message::Quit => {
+                    self.quit();
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Discard the current model and load a new one.
     ///
     /// The environment and population will not change during the lifetime of
     /// the controller's computer process.
-    fn new(&mut self, environment: &Path, population: &str, genome: String);
+    ///
+    /// Argument value is the parameters for the new control system.
+    fn genome(&mut self, environment: &Path, population: &str, value: String);
 
     /// Reset the currently loaded model to it's initial state.
     fn reset(&mut self);
@@ -369,92 +456,6 @@ pub trait API {
     fn quit(&mut self) {}
 }
 
-/// Wait for the next message from the environment, for implementing controllers.
-fn poll() -> Result<Message> {
-    Message::read(&mut std::io::stdin().lock())
-}
-
-/// Send an output value to the environment, for implementing controllers.
-fn output(gin: u64, value: String) -> Result<()> {
-    debug_assert!(!value.contains('\n'));
-    println!("{gin}:{value}");
-    std::io::stdout().flush()?;
-    Ok(())
-}
-
-// Store these in global variables so that the main function is can be re-entered in case of error.
-static ENVIRONMENT: Mutex<Option<PathBuf>> = Mutex::new(None);
-static POPULATION: Mutex<Option<String>> = Mutex::new(None);
-
-/// Start a controller's main program loop.
-///
-/// This method handles communications between the controller (this program) and
-/// the environment. It reads and parses messages from stdin, interfaces with
-/// your implementation of the API trait, and writes messages to stdout.
-///
-/// This method never returns!
-pub fn main(mut controller: impl API) -> Result<()> {
-    loop {
-        let message = poll()?;
-        match message {
-            Message::Environment { environment } => {
-                ENVIRONMENT.lock().unwrap().replace(environment);
-            }
-            Message::Population { population } => {
-                POPULATION.lock().unwrap().replace(population);
-            }
-            Message::New { genome } => {
-                // Wait for the locks.
-                let environment_lock = ENVIRONMENT.lock().unwrap();
-                let population_lock = POPULATION.lock().unwrap();
-                // Borrow the data.
-                let environment = environment_lock.as_ref();
-                let population = population_lock.as_ref();
-                // Fill in missing values.
-                let environment = match environment {
-                    Some(ref_path_buf) => ref_path_buf.as_path(),
-                    None => Path::new(""),
-                };
-                let population = match population {
-                    Some(ref_string) => ref_string.as_str(),
-                    None => "",
-                };
-                controller.new(environment, population, genome);
-            }
-            Message::Reset => {
-                controller.reset();
-            }
-            Message::Advance { dt } => {
-                controller.advance(dt);
-            }
-            Message::SetInput { gin, value } => {
-                controller.set_input(gin, value);
-            }
-            Message::SetBinary { gin, bytes } => {
-                controller.set_binary(gin, bytes);
-            }
-            Message::GetOutput { gin } => {
-                let value = controller.get_output(gin);
-                output(gin, value)?;
-            }
-            Message::Save { path } => {
-                controller.save(path);
-            }
-            Message::Load { path } => {
-                controller.load(path);
-            }
-            Message::Custom { message_type, body } => {
-                controller.custom(message_type, &body);
-            }
-            Message::Quit => {
-                controller.quit();
-                break;
-            }
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,12 +482,12 @@ mod tests {
                 population: " ".to_string(),
             },
             //
-            Message::New {
-                genome: "test123".to_string(),
+            Message::Genome {
+                value: "test123".to_string(),
             },
-            Message::New { genome: "".to_string() },
-            Message::New {
-                genome: "] } ){([\\n\" ".to_string(),
+            Message::Genome { value: "".to_string() },
+            Message::Genome {
+                value: "] } ){([\\n\" ".to_string(),
             },
             //
             Message::Reset,

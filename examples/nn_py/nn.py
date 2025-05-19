@@ -6,12 +6,12 @@ Example controller - artificial neural network
 This file demonstrates how to implement a control system for the NPC Maker.
 """
 
-from npc_maker import ctrl
 import json
 import math
+import npc_maker.ctrl
 
 def logistic(value, slope=1, midpoint=0):
-    # The magic number 4.0 scales the maximum slope of the curve to 1.0
+    # The magic number 4 scales the maximum slope of the curve to 1
     x = 4.0 * slope * (value - midpoint)
     try:
         e = math.exp(-x)
@@ -19,15 +19,17 @@ def logistic(value, slope=1, midpoint=0):
         e = math.inf
     return 1.0 / (1.0 + e)
 
-class NN(ctrl.API):
-    def new(self, environment, population, genotype):
+class NN(npc_maker.ctrl.API):
+    def genome(self, environment, population, genome):
         self.names      = {}
         self.states     = []
         self.slopes     = []
         self.midpoints  = []
         self.edges      = []
         # 
-        for entity in genotype:
+        genome = json.loads(genome)
+        # 
+        for entity in genome:
             if entity["type"] == "Node":
                 gin = int(entity["name"])
                 idx = len(self.names)
@@ -36,7 +38,7 @@ class NN(ctrl.API):
                 self.slopes.append(float(entity["slope"]))
                 self.midpoints.append(float(entity["midpoint"]))
         # 
-        for entity in genotype:
+        for entity in genome:
             if entity["type"] == "Edge":
                 presyn  = int(entity["presyn"])
                 postsyn = int(entity["postsyn"])
@@ -69,4 +71,4 @@ class NN(ctrl.API):
         return self.states[index]
 
 if __name__ == "__main__":
-    ctrl.main(NN())
+    NN().main()
