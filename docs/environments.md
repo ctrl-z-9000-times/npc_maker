@@ -33,7 +33,7 @@ the object.
 
 | Attribute | JSON Type | Default Value | Description |
 | :-------- | :-------: | :------------ | :---------- |
-| `"name"`   | String | Required | Name of the environment, should be globally unique |
+| `"name"`   | String | Required | Name of the environment, should be universally unique |
 | `"path"`   | String | Required | Filesystem path of the environment's executable program, relative to this file |
 | `"spec"`   | String | Automatic | Filesystem path of the environment specification (this file) |
 | `"populations"` | Array of Populations | `[]` | Specification for each population |

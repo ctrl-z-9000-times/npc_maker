@@ -25,7 +25,6 @@ __all__ = (
     "mate",
     "new",
     "poll",
-    # "Remote",
     "score",
     "SoloAPI",
     "Specification",
@@ -252,8 +251,7 @@ class Environment:
     Each environment instance execute in its own subprocess
     and communicates with the caller over its standard I/O channels.
     """
-    def __init__(self, populations, env_spec, mode='graphical', settings={},
-                 stderr=sys.stderr, timeout=None):
+    def __init__(self, populations, env_spec, mode='graphical', settings={}, stderr=sys.stderr):
         """
         Start running an environment program.
 
@@ -271,10 +269,6 @@ class Environment:
 
         Argument stderr is the file descriptor to use for the subprocess's stderr channel.
                  By default, the controller will inherit this process's stderr channel.
-
-        Argument timeout is number of seconds to wait for a response from the
-                environment before declaring it dead and raising a TimeoutError.
-                Optional, if missing or None then this will wait forever.
         """
         self.outstanding = {}
         # Load the environment specification from file.
@@ -313,9 +307,6 @@ class Environment:
             stdout = subprocess.PIPE,
             stderr = stderr)
         os.set_blocking(self._process.stdout.fileno(), False)
-        # 
-        self.timeout = None if timeout is None else float(timeout)
-        self.watchdog = time.time()
 
     def is_alive(self):
         """
@@ -338,7 +329,9 @@ class Environment:
         self._kill_outstanding()
 
     def get_populations(self):
-        """ Get the "populations" argument. """
+        """
+        Get the "populations" argument.
+        """
         return self.populations
 
     def get_env_spec(self):
@@ -349,11 +342,15 @@ class Environment:
         return self.env_spec
 
     def get_mode(self):
-        """ Get the output display "mode" argument. """
+        """
+        Get the output display "mode" argument.
+        """
         return self.mode
 
     def get_settings(self):
-        """ Get the "settings" argument. """
+        """
+        Get the "settings" argument.
+        """
         return dict(self.settings)
 
     def get_outstanding(self):
@@ -372,10 +369,6 @@ class Environment:
             population_name = individual.get_population()
             self.populations[population_name].death(individual)
         self.outstanding.clear()
-
-    def get_timeout(self):
-        """ Get the "timeout" argument. """
-        return self.timeout
 
     def is_alive(self):
         """ Check if the environment program's computer process is still executing. """
@@ -488,13 +481,6 @@ class Environment:
             # Check for messages.
             message = self._process.stdout.readline().strip()
             if not message:
-                # Check for environment timeout.
-                if self.timeout:
-                    elapsed_time = time.time() - self.watchdog
-                    if elapsed_time > 1.5 * self.timeout:
-                        raise TimeoutError("environment timed out")
-                    elif elapsed_time > 0.5 * self.timeout:
-                        self._process.stdin.write(b'"Heartbeat"\n')
                 # Flush all queued responses on the way out the door.
                 self._process.stdin.flush()
                 return
@@ -558,9 +544,6 @@ class Environment:
             else:
                 raise ValueError(f'unrecognized message "{message}"')
 
-            # Any valid activity will kick the watchdog.
-            self.watchdog = time.time()
-
     def on_start(self):
         """
         Callback hook for subclasses to implement.
@@ -603,8 +586,7 @@ class Environment:
         """
 
     @classmethod
-    def run(cls, individuals, env_spec, mode='graphical', settings={},
-            stderr=sys.stderr, timeout=None):
+    def run(cls, individuals, env_spec, mode='graphical', settings={}, stderr=sys.stderr):
         """
         Evaluate the given individuals in the given environment.
 
@@ -633,8 +615,7 @@ class Environment:
                 outstanding -= 1
         dispatchers = {population_name: Dispatcher(indiv_list)
                         for population_name, indiv_list in individuals.items()}
-        env = cls(dispatchers, env_spec, mode, settings,
-                  stderr=stderr, timeout=timeout)
+        env = cls(dispatchers, env_spec, mode, settings, stderr=stderr)
         env.start()
         while env.is_alive():
             if outstanding <= 0 and exhausted:
@@ -648,17 +629,6 @@ class Environment:
         env.quit()
         return {population_name: population.ascended
                 for population_name, population in dispatchers.items()}
-
-class Remote(Environment):
-    """
-    Run an instance of an environment over an SSH connection.
-
-    The environment will execute on the remote compute.
-    """
-    def __init__(self, hostname, port,
-                 populations, env_spec, mode='graphical', settings={},
-                 stderr=sys.stderr, timeout=None):
-        1/0 # TODO
 
 def eprint(*args, **kwargs):
     """

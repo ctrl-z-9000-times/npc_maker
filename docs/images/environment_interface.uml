@@ -21,7 +21,6 @@ frame "The Management Process" as mgmt_proc {
       * graphics mode
       * settings dictionary
       * stderr
-      * timeout
     ]
 
     component instance_commands <<methods>> [
