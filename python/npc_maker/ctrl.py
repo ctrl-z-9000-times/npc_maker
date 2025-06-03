@@ -193,6 +193,7 @@ class Controller:
         Save the current state of the controller to file.
         """
         path = Path(path)
+        assert '\n' not in str(path)
         self._ctrl.stdin.write("S{}\n".format(path).encode("utf-8"))
         self._ctrl.stdin.flush()
 
@@ -201,6 +202,7 @@ class Controller:
         Load the state of the controller from file.
         """
         path = Path(path)
+        assert '\n' not in str(path)
         self._ctrl.stdin.write("L{}\n".format(path).encode("utf-8"))
 
     def custom(self, message_type, message_body):

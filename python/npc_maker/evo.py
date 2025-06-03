@@ -13,28 +13,11 @@ import uuid
 
 __all__ = (
     "API",
+    "Genome",
     "Individual",
-    "Neat",
+    "Evolution",
     "Replayer",
 )
-
-def _clean_ctrl_command(command):
-    if command is None:
-        return None
-    elif isinstance(command, Path):
-        command = [command]
-    elif isinstance(command, str):
-        command = shlex.split(command)
-    else:
-        command = list(command)
-    # Don't resolve the path yet in case the PWD changes.
-    program = Path(command[0]) # .expanduser().resolve()
-    command[0] = program
-    for index in range(1, len(command)):
-        arg = command[index]
-        if not isinstance(arg, bytes) and not isinstance(arg, str):
-            command[index] = str(arg)
-    return command
 
 class API:
     """
@@ -57,6 +40,42 @@ class API:
         """
         raise TypeError("abstract method called")
 
+class Genome:
+    """
+    Abstract class for implementing genetic algorithms.
+    """
+    def parameters(self) -> str:
+        """
+        Serialize the genome into a single-line string for the control system.
+        """
+        raise TypeError("abstract method called")
+
+    def mate(self, other) -> 'Genome':
+        """
+        Called when two individuals sexually reproduce.
+        """
+        raise TypeError("abstract method called")
+
+    def distance(self, other) -> float:
+        """
+        Calculate the genetic distance.
+        This is used for artificial speciation.
+        """
+        raise TypeError("abstract method called")
+
+    def save(self) -> object:
+        """
+        Package the genome into a JSON compatible object.
+        """
+        raise TypeError("abstract method called")
+
+    @classmethod
+    def load(cls, save_data) -> 'Genome':
+        """
+        Recreate a genome from a saved object.
+        """
+        raise TypeError("abstract method called")
+
 class Individual:
     """
     Container for a distinct life-form and all of its associated data.
@@ -76,6 +95,7 @@ class Individual:
                 generation=None,
                 ascension=None,
                 **extras):
+        assert isinstance(genome, Genome)
         self.name           = str(name) if name is not None else str(uuid.uuid4())
         self.environment    = str(environment) if environment is not None else None
         self.population     = str(population) if population is not None else None
@@ -93,19 +113,19 @@ class Individual:
         self.extras         = extras
         self.path           = None
 
-    def get_environment(self):
+    def get_environment(self) -> str:
         """
         Get the name of environment which contains this individual.
         """
         return self.environment
 
-    def get_population(self):
+    def get_population(self) -> str:
         """
         Get the name of this individual's population.
         """
         return self.population
 
-    def get_name(self):
+    def get_name(self) -> str:
         """
         Get this individual's name, which is a UUID string.
 
@@ -113,29 +133,26 @@ class Individual:
         """
         return self.name
 
-    def get_controller(self):
+    def get_controller(self) -> list:
         """
         Get the command line invocation for the controller program.
         """
         return self.controller
 
-    def get_genome(self):
+    def get_genome(self) -> Genome:
         """
         Get this individual's genetic data.
-        The genome may be any JSON encodable object.
-
-        Returns a bundle of decoded JSON data (a python object).
         """
         return self.genome
 
-    def get_score(self):
+    def get_score(self) -> str:
         """
         Get the most recently assigned score,
         or None if it has not been assigned yet.
         """
         return self.score
 
-    def get_custom_score(self, score_function):
+    def get_custom_score(self, score_function) -> float:
         """
         Apply a custom scoring function to this individual.
 
@@ -150,20 +167,21 @@ class Individual:
               will be converted in to a float.
         """
         if callable(score_function):
-            return score_function(self)
+            score = score_function(self)
         elif not score_function or score_function == "score":
-            return self.score
+            score = self.score
         elif score_function == "ascension":
             if self.ascension is None:
-                return math.nan
+                score = math.nan
             else:
-                return self.ascension
+                score = self.ascension
         elif score_function in self.info:
-            return self.info[score_function]
+            score = self.info[score_function]
         else:
             raise ValueError("unrecognized score function " + repr(score_function))
+        return float(score)
 
-    def get_info(self):
+    def get_info(self) -> dict:
         """
         Get the current info.
 
@@ -172,7 +190,7 @@ class Individual:
         """
         return self.info
 
-    def get_species(self):
+    def get_species(self) -> str:
         """
         Get the species UUID.
 
@@ -181,7 +199,7 @@ class Individual:
         """
         return self.species
 
-    def get_parents(self):
+    def get_parents(self) -> int:
         """
         How many parents does this individual have?
 
@@ -190,40 +208,40 @@ class Individual:
         """
         return self.parents
 
-    def get_children(self):
+    def get_children(self) -> int:
         """
         How many children does this individual have?
         """
         return self.children
 
-    def get_birth_date(self):
+    def get_birth_date(self) -> str:
         """
         The time of birth, as a UTC timestamp,
         or None if this individual has not yet been born.
         """
         return self.birth_date
 
-    def get_death_date(self):
+    def get_death_date(self) -> str:
         """
         The time of death, as a UTC timestamp,
         or None if this individual has not yet died.
         """
         return self.death_date
 
-    def get_generation(self):
+    def get_generation(self) -> int:
         """
         How many cohorts of the population size passed before this individual was born?
         """
         return self.generation
 
-    def get_ascension(self):
+    def get_ascension(self) -> int:
         """
         How many individuals died before this individual?
         Returns None if this individual has not yet died.
         """
         return self.ascension
 
-    def get_extras(self):
+    def get_extras(self) -> dict:
         """
         Get any unrecognized fields that were found in the individual's JSON object.
 
@@ -262,7 +280,7 @@ class Individual:
         # Unofficial fields, in case of conflict these take lowest precedence.
         data = dict(self.extras)
         # Required fields.
-        data["genome"] = self.genome
+        data["genome"] = self.genome.save()
         # Optional fields.
         if self.ascension is not None:   data["ascension"]   = self.ascension
         if self.birth_date is not None:  data["birth_date"]  = self.birth_date
@@ -280,43 +298,24 @@ class Individual:
             data["controller"][0] = str(data["controller"][0])
         # 
         self.path = path
-        self.save_hook(data, path)
+        with open(path, 'wt') as file:
+            json.dump(data, file)
         return path
 
     @classmethod
-    def save_hook(cls, data, path):
-        """
-        Write an individual's data to the given file path. Override this method
-        to control how individuals and their genomes are saved/loaded.
-
-        Argument data is the python dictionary containing the individual's serialized data.
-        """
-        with open(path, 'wt') as file:
-            json.dump(data, file)
-
-    @classmethod
-    def load_hook(cls, path) -> dict:
-        """
-        Read an individual's data to the given file path. Override this method
-        to control how individuals and their genomes are saved/loaded.
-
-        Returns the python dictionary containing the individual's serialized data.
-        """
-        with open(path, 'rt') as file:
-            return json.load(file)
-
-    @classmethod
-    def load(cls, path, **kwargs) -> 'Individual':
+    def load(cls, genome_cls, path, **individual_attributes) -> 'Individual':
         """
         Load a previously saved individual.
         """
         path = Path(path)
-        data = cls.load_hook(path)
+        with open(path, 'rt') as file:
+            return json.load(file)
         # 
-        individual = cls(data.pop("genome"), **kwargs)
+        genome = genome_cls(data.pop("genome"))
+        individual = cls.load(genome, **individual_attributes)
         individual.path = path
         # Keyword arguments preempt the saved data.
-        for field in kwargs:
+        for field in individual_attributes:
             data.pop(field, None)
         # Load optional fields.
         individual.ascension   = data.pop("ascension",   individual.ascension)
@@ -336,23 +335,23 @@ class Individual:
         individual.extras.update(data)
         return individual
 
-    def mate(self, other) -> 'Individual':
-        """
-        Sexually reproduce these two individuals.
-
-        Arguments self and other are the same class/type.
-
-        Returns an instance of the Individual class. Anything else will be
-        treated as a genome and wrapped in a new instance of individual.
-        """
-        raise TypeError("abstract method called")
-
-    def distance(self, other) -> float:
-        """
-        Calculate the genetic distance between these two individuals.
-        This is used for artificial speciation.
-        """
-        raise TypeError("abstract method called")
+def _clean_ctrl_command(command):
+    if command is None:
+        return None
+    elif isinstance(command, Path):
+        command = [command]
+    elif isinstance(command, str):
+        command = shlex.split(command)
+    else:
+        command = list(command)
+    # Don't resolve the path yet in case the PWD changes.
+    program = Path(command[0]) # .expanduser().resolve()
+    command[0] = program
+    for index in range(1, len(command)):
+        arg = command[index]
+        if not isinstance(arg, bytes) and not isinstance(arg, str):
+            command[index] = str(arg)
+    return command
 
 class _Recorder:
     def __init__(self, path, leaderboard, hall_of_fame):
@@ -561,7 +560,7 @@ class Replayer(API):
             score = individual.get_custom_score(self._score)
             self._scores.append(score)
 
-class Neat(API, _Recorder):
+class Evolution(API, _Recorder):
     """
     """
     def __init__(self, seed,
@@ -608,7 +607,7 @@ class Neat(API, _Recorder):
         self.species_distribution   = species_distribution
         self.mate_selection         = mate_selection
         self.score_function         = score_function
-        assert issubclass(self.individual_class, Individual)
+        assert isinstance(self.individual_class, Individual)
         assert self.population_size     > 0
         assert self.speciation_distance > 0
         _Recorder.__init__(self, path, leaderboard, hall_of_fame)
