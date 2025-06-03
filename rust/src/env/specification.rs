@@ -12,7 +12,7 @@ pub struct EnvironmentSpec {
     #[serde(skip)]
     pub spec: PathBuf,
 
-    /// Name of the environment, should be globally unique.
+    /// Name of the environment, should be universally unique.
     pub name: String,
 
     /// Filesystem path of the environment’s executable program, relative to this file.

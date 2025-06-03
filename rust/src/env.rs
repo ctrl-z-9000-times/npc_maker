@@ -5,18 +5,48 @@
 //! Environments should use stderr to report any unformatted or diagnostic messages
 //! (see [eprintln!()]).
 
+mod api;
 mod messages;
 mod specification;
 
+pub use api::{ack, death, get_args, info, mate, new, poll, score};
 pub use messages::{Request, Response};
 pub use specification::{EnvironmentSpec, InterfaceSpec, PopulationSpec, SettingsSpec};
 
+use process_anywhere::{Computer, Process};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
-use std::os::fd::AsRawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("SSH: {0}")]
+    Ssh(ssh2::Error),
+
+    #[error("{0}")]
+    Utf8(std::string::FromUtf8Error),
+
+    #[error("Utf8 error in path: {0}")]
+    Utf8Path(PathBuf),
+}
+
+impl From<process_anywhere::Error> for Error {
+    fn from(error: process_anywhere::Error) -> Self {
+        match error {
+            process_anywhere::Error::IO(error) => Error::Io(error),
+            process_anywhere::Error::SSH(error) => Error::Ssh(error),
+            process_anywhere::Error::UTF8(error) => Error::Utf8(error),
+        }
+    }
+}
 
 /// Display mode for environments.
 #[derive(Debug, Default, Serialize, Deserialize, Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
@@ -70,198 +100,267 @@ impl From<bool> for Mode {
     }
 }
 
-/// Read the command line arguments for an environment program.
-///
-/// Environment implementations *must* call this function for initialization purposes.
-///
-/// Returns a tuple of (environment-specification, graphics-mode, settings-dict)
-pub fn get_args() -> (EnvironmentSpec, Mode, HashMap<String, String>) {
-    init();
-    // Read the command line arguments.
-    let mut arg_iter = std::env::args();
-    let _program = arg_iter.next();
-    let spec_file = arg_iter.next();
-    let mode = arg_iter.next();
-    let mut settings: Vec<String> = arg_iter.collect();
-    // Read the environment specification file.
-    let Some(spec_file) = spec_file else {
-        panic!("Argument Error: missing environment specification")
-    };
-    let spec_file = Path::new(&spec_file)
-        .canonicalize()
-        .unwrap_or_else(|err| panic!("File Error: {err}: {spec_file:?}"));
-    let spec_data =
-        std::fs::read_to_string(&spec_file).unwrap_or_else(|err| panic!("File Error: {err}: {spec_file:?}"));
-    let mut env_spec: EnvironmentSpec =
-        serde_json::from_str(&spec_data).unwrap_or_else(|err| panic!("JSON Decode Error: {err}: {spec_file:?}"));
-    env_spec.spec = spec_file;
-    // Read the graphics mode.
-    let mode = if let Some(mode) = mode {
-        mode.parse().unwrap_or_else(|err| panic!("Argument Error: {err}"))
-    } else {
-        Mode::default()
-    };
-    // Assemble the settings dictionary.
-    let mut defaults: HashMap<String, _> = env_spec
-        .settings
-        .iter()
-        .map(|item| (item.name().to_string(), item.default()))
-        .collect();
-    let mut settings = settings.chunks_exact_mut(2);
-    for chunk in &mut settings {
-        let item = std::mem::take(&mut chunk[0]);
-        let value = std::mem::take(&mut chunk[1]);
-        if !defaults.contains_key(&item) {
-            panic!("Argument Error: unexpected parameter \"{item}\"")
-        }
-        defaults.insert(item, value);
-    }
-    if !settings.into_remainder().is_empty() {
-        panic!("Argument Error: odd number of settings, expected key-value pairs");
-    }
-    //
-    (env_spec, mode, defaults)
+pub struct Environment {
+    env_spec: Arc<EnvironmentSpec>,
+    mode: Mode,
+    settings: HashMap<String, String>,
+    process: Box<Process>,
+    outstanding: HashMap<String, Individual>,
 }
 
-fn init() {
-    #[cfg(target_family = "unix")]
-    {
-        change_blocking_fd(io::stdin().as_raw_fd(), false);
-    }
-    #[cfg(target_family = "windows")]
-    {
-        todo!()
-    }
+struct Individual {
+    score: Option<f64>,
+    info: HashMap<String, String>,
 }
 
-#[cfg(target_family = "unix")]
-fn change_blocking_fd(fd: std::os::unix::io::RawFd, blocking: bool) {
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL);
-        if flags < 0 {
-            panic!("libc file control error");
+/// This class encapsulates an instance of an environment and provides methods
+/// for using environments.
+///
+/// Each environment instance execute in its own subprocess
+/// and communicates with the caller over its standard I/O channels.
+impl Environment {
+    /// Start running an environment program.
+    ///
+    /// Argument populations is a dict of evolution API instances, indexed by
+    /// population name. Every population must have a corresponding instance of
+    /// npc_maker.evo.API.
+    ///
+    /// Argument env_spec is the filesystem path of the environment specification.
+    ///
+    /// Argument mode is either the word "graphical" or the word "headless" to
+    /// indicate whether or not the environment should show graphical output to
+    /// the user.
+    ///
+    /// Argument settings is a dict of command line arguments for the
+    /// environment process. These must match what is listed in the environment
+    /// specification.
+    pub fn new(
+        computer: Arc<Computer>,
+        env_spec: Arc<EnvironmentSpec>,
+        mode: Mode,
+        settings: HashMap<String, String>,
+    ) -> Result<Self, Error> {
+        // Assemble the program's command line invocation.
+        let mut command = Vec::<&str>::with_capacity(2 + 2 * settings.len());
+        //
+        let Some(path) = env_spec.path.as_path().to_str() else {
+            return Err(Error::Utf8Path(env_spec.path.clone()));
+        };
+        command.push(path);
+        //
+        match mode {
+            Mode::Graphical => command.push("graphical"),
+            Mode::Headless => command.push("headless"),
         }
-        let error = libc::fcntl(
-            fd,
-            libc::F_SETFL,
-            if blocking {
-                flags & !libc::O_NONBLOCK
+        //
+        let arena = typed_arena::Arena::<String>::new();
+        for item in env_spec.settings.iter() {
+            command.push(item.name());
+            if let Some(argument) = settings.get(item.name()) {
+                command.push(argument.as_str());
             } else {
-                flags | libc::O_NONBLOCK
-            },
-        );
-        if error < 0 {
-            panic!("libc file control error");
-        }
-    }
-}
-
-/// Check for messages from the main NPC Maker program.
-///
-/// Callers *must* call the `get_args()` function before this, for initialization purposes.
-///
-/// This function is non-blocking and returns `None` if there are no new
-/// messages. This decodes the JSON messages and returns `Request` objects.
-pub fn poll() -> Result<Option<Request>, Error> {
-    // Read a line from stdin, non blocking.
-    let mut line = String::new();
-    if let Err(error) = io::stdin().lock().read_line(&mut line) {
-        if error.kind() == io::ErrorKind::WouldBlock {
-            io::stdout().flush()?;
-            return Ok(None);
-        } else {
-            return Err(error.into());
-        }
-    }
-    let line = line.trim();
-    if line.is_empty() {
-        return Ok(None);
-    }
-    // Parse the message.
-    match serde_json::from_str(line) {
-        Err(error) => {
-            if false {
-                // Ignore invalid data (cat on keyboard).
-                eprintln!("JSON decode error {error}");
-                Ok(None)
-            } else {
-                // Propagate errors to the caller.
-                Err(error.into())
+                let default = arena.alloc(item.default());
+                command.push(default.as_str());
             }
         }
-        Ok(message) => Ok(Some(message)),
+        //
+        let process = computer.exec(&command)?;
+        //
+        Ok(Self {
+            env_spec,
+            mode,
+            settings,
+            process,
+            outstanding: HashMap::new(),
+        })
+    }
+
+    /// Get the environment specification.
+    pub fn get_env_spec(&self) -> &Arc<EnvironmentSpec> {
+        &self.env_spec
+    }
+
+    /// Get the output display mode argument.
+    pub fn get_mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Get the "settings" argument.
+    pub fn get_settings(&self) -> &HashMap<String, String> {
+        &self.settings
+    }
+
+    pub fn is_alive(&self) -> Result<bool, Error> {
+        todo!()
+    }
+
+    /// Request to start the environment.
+    pub fn start(&mut self) -> Result<(), Error> {
+        self.process.send_line(r#""Start""#)?;
+        Ok(())
+    }
+
+    /// Request to stop the environment.
+    pub fn stop(&mut self) -> Result<(), Error> {
+        self.process.send_line(r#""Stop""#)?;
+        Ok(())
+    }
+
+    /// Request to pause the environment.
+    pub fn pause(&mut self) -> Result<(), Error> {
+        self.process.send_line(r#""Pause""#)?;
+        Ok(())
+    }
+
+    /// Request to resume the environment.
+    pub fn resume(&mut self) -> Result<(), Error> {
+        self.process.send_line(r#""Resume""#)?;
+        Ok(())
+    }
+
+    /// Request to quit the environment.
+    pub fn quit(&mut self) -> Result<(), Error> {
+        self.process.send_line(r#""Quit""#)?;
+        Ok(())
+    }
+
+    /// Request to save the environment to the given path.
+    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let Some(path) = path.as_ref().to_str() else {
+            return Err(Error::Utf8Path(path.as_ref().to_path_buf()));
+        };
+        self.process.send_line(&format!(r#"{{"Save":"{path}"}}"#))?;
+        Ok(())
+    }
+
+    /// Request to load the environment from the given path.
+    pub fn load(&mut self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let Some(path) = path.as_ref().to_str() else {
+            return Err(Error::Utf8Path(path.as_ref().to_path_buf()));
+        };
+        self.process.send_line(&format!(r#"{{"Load":"{path}"}}"#))?;
+        Ok(())
+    }
+
+    /// Send a user defined JSON message to the environment.
+    pub fn custom(&mut self, message: &str) -> Result<(), Error> {
+        debug_assert!(!message.contains('\n'));
+        self.process.send_line(&format!(r#"{{"Custom":{message}}}"#))?;
+        Ok(())
+    }
+
+    ///
+    pub fn birth(
+        &mut self,
+        name: &str,
+        parents: &[&str],
+        population: &str,
+        controller: &[&str],
+        genome: &str,
+    ) -> Result<(), Error> {
+        debug_assert!(!name.is_empty());
+        debug_assert!(!name.contains('\n'));
+        debug_assert!(parents.iter().all(|x| !x.contains('\n')));
+        debug_assert!(!controller.is_empty());
+        debug_assert!(!genome.contains('\n'));
+        //
+        let env = &self.env_spec.name;
+        // Fill in the population if there is exactly one.
+        let pop = if !population.is_empty() {
+            assert!(
+                self.env_spec
+                    .populations
+                    .iter()
+                    .find(|pop| pop.name == population)
+                    .is_some(),
+                "no such population"
+            );
+            population
+        } else {
+            assert!(self.env_spec.populations.len() == 1, "missing argument \"population\"");
+            &self.env_spec.populations[0].name
+        };
+        // Pack the parents into a JSON array of strings.
+        let mut parents_json = String::new();
+        for x in parents {
+            parents_json.push('"');
+            parents_json.push_str(x);
+            parents_json.push('"');
+            parents_json.push(',');
+        }
+        parents_json.pop();
+        // Pack the controller's command line invocation into a JSON array of strings.
+        let mut ctrl_json = String::new();
+        for arg in controller {
+            debug_assert!(!arg.contains('\n'));
+            ctrl_json.push('"');
+            ctrl_json.push_str(arg);
+            ctrl_json.push('"');
+            ctrl_json.push(',');
+        }
+        ctrl_json.pop();
+        //
+        let name_conflict = self.outstanding.insert(
+            name.to_string(),
+            Individual {
+                score: None,
+                info: HashMap::new(),
+            },
+        );
+        assert!(name_conflict.is_none(), "individuals with duplicate names");
+        //
+        let message = &format!(
+            r#"{{"Birth":{{"environment":"{env}","population":"{pop}","name":"UUID","controller":[{ctrl_json}],"genome":{genome},"parents":[{parents_json}]}}}}"#
+        );
+        self.process.send_line(message)?;
+        Ok(())
+    }
+
+    ///
+    pub fn poll(&mut self) -> Result<Option<Response>, Error> {
+        // Get the next message.
+        let Some(message) = self.process.recv_line()? else {
+            return Ok(None);
+        };
+        // Ignore empty lines.
+        let message = message.trim();
+        if message.is_empty() {
+            return Ok(None);
+        }
+        // Parse the line into the message structure.
+        let message: Response = serde_json::from_str(message)?;
+        // Process the message.
+        match message {
+            Response::Ack { .. } => {
+                //
+                Ok(Some(message))
+            }
+            Response::New { .. } => {
+                //
+                Ok(Some(message))
+            }
+            Response::Mate { .. } => {
+                //
+                Ok(Some(message))
+            }
+            Response::Score { .. } => {
+                //
+                Ok(None)
+            }
+            Response::Info { .. } => {
+                //
+                Ok(None)
+            }
+            Response::Death { .. } => {
+                //
+                Ok(Some(message))
+            }
+        }
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("{0}")]
-    Json(#[from] serde_json::Error),
-}
-
-/// Acknowledge that the given message has been successfully acted upon.
-pub fn ack(message: &Request) {
-    // Birth messages don't need to be acknowledged.
-    if let Request::Birth { .. } = message {
-        return;
+impl Drop for Environment {
+    fn drop(&mut self) {
+        //
     }
-    let mut stdout = io::stdout().lock();
-    write!(stdout, "{{\"Ack\":").unwrap();
-    serde_json::to_writer(&mut stdout, message).unwrap();
-    writeln!(stdout, "}}").unwrap();
-}
-
-/// Request a new individual from the evolutionary algorithm.
-///
-/// Argument population is optional if the environment contains exactly one population.
-pub fn new(population: Option<&str>) {
-    println!(r#"{{"New":"{}"}}"#, population.unwrap_or(""));
-}
-
-/// Request to mate two specific individuals together to produce a child individual.
-pub fn mate(parent1: &str, parent2: &str) {
-    println!(r#"{{"Mate":["{parent1}","{parent2}"]}}"#);
-}
-
-/// Report an individual's score or reproductive fitness to the evolutionary algorithm.
-///
-/// This should be called *before* calling [death] on the individual.
-///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn score(individual: Option<&str>, value: &str) {
-    println!(r#"{{"Score":"{value}","name":"{}"}}"#, individual.unwrap_or(""));
-}
-
-/// Report extra information about an individual.
-///
-/// Argument info is a mapping of string key-value pairs.
-///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn info(individual: Option<&str>, info: &HashMap<String, String>) {
-    let mut json = String::new();
-    for (key, value) in info {
-        json.push('"');
-        json.push_str(key);
-        json.push('"');
-        json.push(':');
-        json.push('"');
-        json.push_str(value);
-        json.push('"');
-        json.push(',');
-    }
-    json.pop(); // Remove trailing comma.
-    println!(r#"{{"Info":{{{json}}},"name":"{}"}}"#, individual.unwrap_or(""));
-}
-
-/// Notify the evolutionary algorithm that the given individual has died.
-///
-/// The individual's score or reproductive fitness should be reported
-/// using the [score()] function *before* calling this method.
-///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn death(individual: Option<&str>) {
-    println!(r#"{{"Death":"{}"}}"#, individual.unwrap_or(""));
 }
