@@ -955,8 +955,6 @@ class SoloAPI:
                     ack(request)
 
                 elif request == "Quit":
-                    for controller in cache.values():
-                        controller.quit()
                     ack(request)
                     self.quit()
                     del self

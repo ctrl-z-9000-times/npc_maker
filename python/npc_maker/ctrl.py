@@ -55,6 +55,8 @@ class Controller:
     This class provides methods for using controllers.
 
     Each controller instance is executed in a subprocesses.
+
+    This object's destruction triggers the controller to terminate.
     """
     def __init__(self, environment, population, command, stderr=sys.stderr):
         """
@@ -211,22 +213,14 @@ class Controller:
         """
         message_type = str(message_type).strip().upper()
         assert len(message_type) == 1
-        assert message_type not in "EPGRXIBOSLQ"
+        assert message_type not in "EPGRXIBOSL"
         message_body = str(message_body)
         assert '\n' not in message_body
         self._ctrl.stdin.write("{}{}\n".format(message_type, message_body).encode("utf-8"))
 
-    def quit(self):
-        """
-        Tell the controller process to stop running.
-        """
-        self._ctrl.stdin.write(b"Q\n")
-        self._ctrl.stdin.flush()
-
     def __del__(self):
         if hasattr(self, "_ctrl") and not self._ctrl.stdin.closed:
             try:
-                self.quit()
                 self._ctrl.stdin.close()
             except BrokenPipeError:
                 pass
@@ -304,7 +298,7 @@ class API:
 
         This function never returns!
         """
-        global _stdin, _environment, _population
+        global _environment, _population
         while True:
             try:
                 msg_type, msg_body = _parse_message()
@@ -321,22 +315,13 @@ class API:
                 value = str(self.get_output(gin))
                 assert '\n' not in value
                 reply = f"{gin}:{value}"
-                try:
-                    print(reply, flush=True)
-                except ValueError:
-                    if sys.stdout.closed:
-                        break
-                    else:
-                        raise
+                print(reply, flush=True)
 
             elif msg_type == "B":
                 gin, num_bytes  = msg_body.split(":")
                 gin             = int(gin)
                 num_bytes       = int(num_bytes)
-                try:
-                    binary      = _readbytes(num_bytes)
-                except EOFError:
-                    break
+                binary          = _readbytes(num_bytes)
                 self.set_binary(gin, binary)
 
             elif msg_type == "X":
@@ -363,12 +348,10 @@ class API:
                 load_path = Path(msg_body)
                 self.load(load_path)
 
-            elif msg_type == "Q":
-                self.quit()
-                break
-
             else:
                 self.custom(msg_type, msg_body)
+
+        self.quit()
 
     def genome(self, environment: 'Path', population: str, value: str):
         """

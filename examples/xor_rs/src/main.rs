@@ -84,8 +84,4 @@ fn main() {
             }
         }
     }
-
-    if let Some(ctrl) = &mut ctrl {
-        ctrl.quit().unwrap();
-    }
 }

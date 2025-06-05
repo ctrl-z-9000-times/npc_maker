@@ -32,6 +32,8 @@ fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf> {
 /// An instance of a control system.
 ///
 /// This object provides methods for using a controller.
+///
+/// This object's destruction triggers the controller to terminate.
 #[derive(Debug)]
 pub struct Controller {
     environment: PathBuf,
@@ -178,23 +180,10 @@ impl Controller {
     /// Send a custom message to the controller using a new message type.
     pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<()> {
         debug_assert!(message_type == message_type.to_ascii_uppercase());
-        debug_assert!(!"EPGRXIBOSLQ".contains(message_type));
+        debug_assert!(!"EPGRXIBOSL".contains(message_type));
         debug_assert!(!message_body.contains('\n'));
         writeln!(self.stdin, "{message_type}{message_body}")?;
         Ok(())
-    }
-
-    /// Stop running the controller process.
-    pub fn quit(&mut self) -> Result<()> {
-        writeln!(self.stdin, "Q")?;
-        self.stdin.flush()?;
-        Ok(())
-    }
-}
-
-impl Drop for Controller {
-    fn drop(&mut self) {
-        let _ = self.quit();
     }
 }
 
@@ -243,7 +232,7 @@ impl Message {
 
             Self::Custom { message_type, body } => writeln!(writer, "{}{}", message_type, body)?,
 
-            Self::Quit => writeln!(writer, "Q")?,
+            Self::Quit => {}
         };
         if let Self::SetBinary { bytes, .. } = self {
             writer.write_all(bytes.as_slice())?;
@@ -257,7 +246,7 @@ impl Message {
         while line.is_empty() {
             let bytes_read = reader.read_line(&mut line)?;
             if bytes_read == 0 {
-                return Err(Error::new(ErrorKind::UnexpectedEof, "stdin closed"));
+                return Ok(Self::Quit);
             }
             line.pop(); // Remove the trailing newline.
         }
@@ -303,7 +292,6 @@ impl Message {
             },
             'S' => Self::Save { path: msg_body.into() },
             'L' => Self::Load { path: msg_body.into() },
-            'Q' => Self::Quit,
             _ => Self::Custom {
                 message_type: msg_type,
                 body: msg_body.to_string(),
@@ -598,8 +586,6 @@ mod tests {
                 message_type: '!',
                 body: " \t ".to_string(),
             },
-            //
-            Message::Quit,
         ];
 
         for original in test_messages {

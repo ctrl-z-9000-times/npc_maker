@@ -44,7 +44,7 @@ specifications.
 | Save | `S[PATH]\n` | `[PATH]` is the filesystem path to save to. If the file already exists then overwrite it. The parent directory will always exist | Save the current state of the controller to file |
 | Load | `L[PATH]\n` | `[PATH]` is the filesystem path to load from | Load the state of the controller from file |
 | Custom Message | `[TYPE][MESSAGE]\n` | `[TYPE]` is a single capital letter, which is not already in use by the protocol. `[MESSAGE]` may be any UTF-8 string | Send a custom message to the controller using a new message type |
-| Quit | `Q\n` |  | Stop running the controller process. Exit as soon as possible |
+| Quit | End of File |  | Stop running the controller process. Exit as soon as possible |
 
 
 ## Standard Output Channel ##

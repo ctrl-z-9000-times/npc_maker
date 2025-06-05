@@ -41,7 +41,6 @@ def test_nn():
         x.reset()
         x.advance(0.01)
         assert float(x.get_outputs(1)) < .001
-        x.quit()
         del x
 
 if __name__ == "__main__":
