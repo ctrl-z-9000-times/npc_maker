@@ -445,19 +445,18 @@ class Environment:
         """
         # Unpack the individual's data.
         assert isinstance(individual, npc_maker.evo.Individual)
-        env     = individual.get_environment()
-        pop     = individual.get_population()
         name    = individual.get_name()
-        ctrl    = individual.get_controller()
-        genome  = individual.get_genome()
+        pop     = individual.get_population()
         parents = [p.get_name() for p in parents]
+        genome  = individual.get_parameters()
+        ctrl    = individual.get_controller()
         if ctrl is None:
             raise ValueError("indiviual is missing controller")
         ctrl[0] = str(ctrl[0]) # Convert Path to String
         # Process the request.
         self.outstanding[name] = individual
-        self._process.stdin.write('{{"Birth":{{"environment":"{}","population":"{}","name":"{}","controller":{},"genome":{},"parents":{}}}}}\n'
-            .format(env, pop, name, json.dumps(ctrl), json.dumps(genome), json.dumps(parents))
+        self._process.stdin.write('{{"Birth":{{"name":"{}","population":"{}","parents":{},"controller":{},"genome":{}}}}}\n'
+            .format(name, pop, json.dumps(parents), json.dumps(ctrl), json.dumps(genome))
             .encode("utf-8"))
         individual.birth_date = _timestamp()
 

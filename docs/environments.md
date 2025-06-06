@@ -157,11 +157,11 @@ The management program wants to control the state of execution of its
 environment programs. The following table summarizes all of the commands that
 the management program may send to the environment and the appropriate response
 for each command. The environment should send an "Ack" response only after it
-successfully completes the given command. In case multiple conflicting commands
-are received before the environment is able to service them, only the most
-recent command should be performed and acknowledged. If for any reason the
+successfully completes the given command. Command should be performed and
+acknowledged in the order that they are received. If for any reason the
 environment needs to change into a state that was not commanded, then it should
-send the corresponding "Ack" response unprompted to inform the management program.
+send the corresponding "Ack" response unprompted to inform the management
+program.
 
 | Message Type | Sender | Receiver | Description |
 | :----------- | :----: | :------: | :---------- |
@@ -206,9 +206,8 @@ summarizes all of the messages related to managing individuals.
 | Attribute | JSON Type | Description |
 | :-------- | :-------: | :---------- |
 | `"name"`        | String | Each individual is assigned a UUID for future reference |
-| `"parents"`     | List of Strings | The UUIDs of the parents. May be empty, especially if created by a "New" request |
-| `"environment"` | String | Name of the environment that the individual is being born into |
 | `"population"`  | String | Name of the population that this individual belongs to  |
+| `"parents"`     | List of Strings | The UUIDs of the parents. May be empty, especially if created by a "New" request |
 | `"controller"`  | List of Strings | Command line invocation of the controller program |
 | `"genome"`   | Anything | Genetic parameters for the new controller |
 
@@ -220,7 +219,7 @@ Words in ALL-CAPS are placeholders for runtime data.
 | Message Format |
 | :------------- |
 | `{"Ack":MESSAGE}\n` |
-| `{"Birth":{"environment":"ENVIRONMENT","population":"POPULATION","name":"UUID","controller":["COMMAND"],"genome":GENOME,"parents":["UUID"]}}\n` |
+| `{"Birth":{"name":"UUID","population":"POPULATION","parents":["UUID"],"controller":["COMMAND"],"genome":GENOME}}\n` |
 | `{"Custom":JSON}\n` |
 | `{"Death":"UUID"}\n` |
 | `"Heartbeat"\n` |

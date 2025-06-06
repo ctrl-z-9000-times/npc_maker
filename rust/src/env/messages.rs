@@ -51,20 +51,17 @@ pub enum Request {
     /// response to a request for either a new individual or a mating of two
     /// individuals. This message does not need to be acknowledged.
     Birth {
-        #[serde(default)]
-        environment: String,
+        name: String,
 
         #[serde(default)]
         population: String,
 
-        name: String,
+        #[serde(default)]
+        parents: Vec<String>,
 
         controller: Vec<String>,
 
         genome: serde_json::Value,
-
-        #[serde(default)]
-        parents: Vec<String>,
     },
 
     /// Send a user defined message to the environment.
@@ -132,7 +129,6 @@ mod tests {
             Request::Load("./my_save.json".to_string()),
             Request::Quit,
             Request::Birth {
-                environment: " ".to_string(),
                 population: "pop1".to_string(),
                 name: "42".to_string(),
                 controller: vec![
@@ -145,7 +141,6 @@ mod tests {
                 parents: vec!["qewrty".to_string(), "".to_string()],
             },
             Request::Birth {
-                environment: "env1 2 3".to_string(),
                 population: "pop1".to_string(),
                 name: "43".to_string(),
                 controller: vec![],
@@ -243,9 +238,9 @@ mod tests {
         );
         assert_eq!(
             serde_json::to_string(&Request::Birth {
-                environment: "env1".to_string(),
-                population: "pop1".to_string(),
                 name: "1234".to_string(),
+                population: "pop1".to_string(),
+                parents: vec!["1020".to_string(), "1077".to_string()],
                 controller: vec!["/usr/bin/q".to_string()],
                 genome: serde_json::json! {
                     [
@@ -253,10 +248,9 @@ mod tests {
                         {"name": 7, "type": "bar"},
                     ]
                 },
-                parents: vec!["1020".to_string(), "1077".to_string()],
             })
             .unwrap(),
-            r#"{"Birth":{"environment":"env1","population":"pop1","name":"1234","controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}],"parents":["1020","1077"]}}"#
+            r#"{"Birth":{"name":"1234","population":"pop1","parents":["1020","1077"],"controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}]}}"#
         );
         assert_eq!(
             serde_json::to_string(&Request::Custom(serde_json::json!({"foo":"bar"}))).unwrap(),

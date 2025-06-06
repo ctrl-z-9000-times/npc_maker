@@ -111,9 +111,8 @@ frame "The Environment Subprocess" as env_proc {
     ** {"Custom": JSON}
     ** {"Birth": {
           "name": "UUID",
-          "parents": ["UUID", "UUID"],
-          "environment": "ENVIRONMENT"
           "population": "POPULATION",
+          "parents": ["UUID", "UUID"],
           "controller": ["COMMAND"],
           "genome": GENOME
       }}
