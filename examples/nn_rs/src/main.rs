@@ -59,11 +59,12 @@ impl API for NeuralNetwork {
         //
         self.names = genome
             .iter()
-            .enumerate()
-            .filter_map(|(idx, chrom)| match chrom {
-                Chromosome::Node { .. } => Some((chrom.name(), idx as u64)),
+            .filter_map(|chrom| match chrom {
+                Chromosome::Node { .. } => Some(chrom.name()),
                 Chromosome::Edge { .. } => None,
             })
+            .enumerate()
+            .map(|(idx, name)| (name, idx as u64))
             .collect();
         //
         self.nodes = genome

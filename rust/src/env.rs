@@ -21,6 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 #[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     #[error("{0}")]
     Io(#[from] std::io::Error),
@@ -41,9 +42,9 @@ pub enum Error {
 impl From<process_anywhere::Error> for Error {
     fn from(error: process_anywhere::Error) -> Self {
         match error {
-            process_anywhere::Error::IO(error) => Error::Io(error),
-            process_anywhere::Error::SSH(error) => Error::Ssh(error),
-            process_anywhere::Error::UTF8(error) => Error::Utf8(error),
+            process_anywhere::Error::Io(error) => Error::Io(error),
+            process_anywhere::Error::Ssh(error) => Error::Ssh(error),
+            process_anywhere::Error::Utf8(error) => Error::Utf8(error),
         }
     }
 }
@@ -100,6 +101,10 @@ impl From<bool> for Mode {
     }
 }
 
+/// An instance of an environment.
+///
+/// Each environment instance execute in its own subprocess
+/// and communicates with the caller over its standard I/O channels.
 pub struct Environment {
     env_spec: Arc<EnvironmentSpec>,
     mode: Mode,
@@ -113,11 +118,6 @@ struct Individual {
     info: HashMap<String, String>,
 }
 
-/// This class encapsulates an instance of an environment and provides methods
-/// for using environments.
-///
-/// Each environment instance execute in its own subprocess
-/// and communicates with the caller over its standard I/O channels.
 impl Environment {
     /// Start running an environment program.
     ///
@@ -147,6 +147,11 @@ impl Environment {
             return Err(Error::Utf8Path(env_spec.path.clone()));
         };
         command.push(path);
+        //
+        let Some(spec) = env_spec.spec.as_path().to_str() else {
+            return Err(Error::Utf8Path(env_spec.spec.clone()));
+        };
+        command.push(spec);
         //
         match mode {
             Mode::Graphical => command.push("graphical"),
@@ -190,8 +195,9 @@ impl Environment {
         &self.settings
     }
 
-    pub fn is_alive(&self) -> Result<bool, Error> {
-        todo!()
+    /// Is the environment subprocess still running?
+    pub fn is_alive(&mut self) -> Result<bool, Error> {
+        Ok(self.process.is_alive()?)
     }
 
     /// Request to start the environment.
@@ -260,8 +266,9 @@ impl Environment {
     ) -> Result<(), Error> {
         debug_assert!(!name.is_empty());
         debug_assert!(!name.contains('\n'));
-        debug_assert!(parents.iter().all(|x| !x.contains('\n')));
         debug_assert!(!controller.is_empty());
+        debug_assert!(controller.iter().all(|x| !x.contains('\n')));
+        debug_assert!(parents.iter().all(|x| !x.contains('\n')));
         debug_assert!(!genome.contains('\n'));
         //
         let env = &self.env_spec.name;
@@ -280,25 +287,8 @@ impl Environment {
             assert!(self.env_spec.populations.len() == 1, "missing argument \"population\"");
             &self.env_spec.populations[0].name
         };
-        // Pack the parents into a JSON array of strings.
-        let mut parents_json = String::new();
-        for x in parents {
-            parents_json.push('"');
-            parents_json.push_str(x);
-            parents_json.push('"');
-            parents_json.push(',');
-        }
-        parents_json.pop();
-        // Pack the controller's command line invocation into a JSON array of strings.
-        let mut ctrl_json = String::new();
-        for arg in controller {
-            debug_assert!(!arg.contains('\n'));
-            ctrl_json.push('"');
-            ctrl_json.push_str(arg);
-            ctrl_json.push('"');
-            ctrl_json.push(',');
-        }
-        ctrl_json.pop();
+        let ctrl_json = serde_json::to_string(controller).unwrap();
+        let parents_json = serde_json::to_string(parents).unwrap();
         //
         let name_conflict = self.outstanding.insert(
             name.to_string(),
@@ -310,7 +300,7 @@ impl Environment {
         assert!(name_conflict.is_none(), "individuals with duplicate names");
         //
         let message = &format!(
-            r#"{{"Birth":{{"environment":"{env}","population":"{pop}","name":"UUID","controller":[{ctrl_json}],"genome":{genome},"parents":[{parents_json}]}}}}"#
+            r#"{{"Birth":{{"environment":"{env}","population":"{pop}","name":"UUID","controller":{ctrl_json},"genome":{genome},"parents":{parents_json}}}}}"#
         );
         self.process.send_line(message)?;
         Ok(())
@@ -318,6 +308,10 @@ impl Environment {
 
     ///
     pub fn poll(&mut self) -> Result<Option<Response>, Error> {
+        //
+        while let Some(line) = self.process.error_line()? {
+            eprintln!("{line}");
+        }
         // Get the next message.
         let Some(message) = self.process.recv_line()? else {
             return Ok(None);
@@ -329,6 +323,10 @@ impl Environment {
         }
         // Parse the line into the message structure.
         let message: Response = serde_json::from_str(message)?;
+
+        Ok(Some(message))
+
+        /*
         // Process the message.
         match message {
             Response::Ack { .. } => {
@@ -356,6 +354,7 @@ impl Environment {
                 Ok(Some(message))
             }
         }
+        */
     }
 }
 

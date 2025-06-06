@@ -7,6 +7,7 @@
     repository      = "https://github.com/ctrl-z-9000-times/npc_maker"
 
 [dependencies]
-    npc_maker  = { path = "../../rust/" }
-    serde      = { version = "1.0" }
-    serde_json = { version = "1.0" }
+    npc_maker           = { path = "../../rust/" }
+    process_anywhere    = { version = "0.3" }
+    serde               = { version = "1.0" }
+    serde_json          = { version = "1.0" }
