@@ -312,20 +312,11 @@ class Environment:
         """
         Check if the environment subprocess is still running or if it has exited.
         """
-        return self._process.returncode is None
+        return self._process.poll() is None
 
     def __del__(self):
         if hasattr(self, "_process"): # Guard against crashes in __init__.
-            try:
-                self.quit()
-                self._process.stdin.close()
-                # self._process.stdout.close() # Do not close the stdout pipe. Python complains too loudly.
-                # self._process.terminate() # Do not force kill the process. Give it time to exit cleanly.
-            except BrokenPipeError:
-                pass
-            except IOError as error:
-                if error.errno == errno.EPIPE:
-                    pass
+            self.quit()
         self._kill_outstanding()
 
     def get_populations(self):
@@ -370,10 +361,6 @@ class Environment:
             self.populations[population_name].death(individual)
         self.outstanding.clear()
 
-    def is_alive(self):
-        """ Check if the environment program's computer process is still executing. """
-        return self._process.poll() is None
-
     def start(self):
         """
         Request to start the environment.
@@ -404,14 +391,9 @@ class Environment:
 
     def quit(self):
         """
-        Request to quit the environment.
+        Tell the environment program to exit.
         """
-        try:
-            self._process.stdin.write(b'"Quit"\n')
-            self._process.stdin.flush()
-        except BrokenPipeError:
-            pass
-        self._kill_outstanding()
+        self._process.stdin.close()
 
     def save(self, path):
         """
@@ -689,15 +671,16 @@ def poll():
     """
     Check for messages from the management program.
 
-    This function is non-blocking and will return "None" if there are no new
-    messages. This decodes the JSON messages and returns python objects.
-
     Callers *must* call the `get_args()` function before using this,
     for initialization purposes.
+
+    This function is non-blocking and will return None if there are no new messages. 
+    If the standard input channel is closed then this returns the string "Quit".
+    Otherwise this decodes JSON messages into python objects and returns them.
     """
     try:
         message = sys.stdin.readline()
-    # If only communication channels with the main program are dead then exit immediately.
+    # If any communication channels with the main program are dead then exit immediately.
     except ValueError:
         if sys.stdin.closed:
             return "Quit"

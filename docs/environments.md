@@ -122,7 +122,7 @@ They are called with the following command line arguments:
 
 2) Either the word "graphical" or the word "headless" to indicate whether or not
 the environment should show graphical output to the user. This is useful for
-diagnostic and demonstration purposes.
+diagnostics and demonstrations.
 
 3) The remaining arguments are the user's settings, as `name` `value` pairs.
 These are described in the "settings" attribute of the environment
@@ -144,7 +144,7 @@ terminated by the newline character "`\n`". In the event of unrecognized or
 invalid messages, all parties should attempt to recover and resume normal
 operation.
 
-Normally messages are sent over the `stdin` and `stdout` channels. The `stderr`
+Regular messages are sent over the `stdin` and `stdout` channels. The `stderr`
 channel is reserved for communicating errors and diagnostic information from
 the environment program to the management program. The `stderr` channel has no
 specific message format or protocol. By default environments inherit their
@@ -172,7 +172,7 @@ program.
 | Heartbeat | Management | Environment | The NPC Maker uses watchdog timers to manage unreliable environments. Heartbeat messages must be must acknowledge or else the environment will be considered timed out |
 | Save | Management | Environment | Save the current state of the environment to the given filesystem path, including the internal states of all control systems. Note that when the environment is reloaded in-flight messages might not be replayed |
 | Load | Management | Environment | Discard the current state of the environment and load a previously saved state from the given filesystem path |
-| Quit | Management | Environment | Demand the environment shut down and exit as fast as possible. Do not finish any work in progress and do not save any data. The environment will not be resumed. Further messages sent to management will be ignored |
+| Quit | Management | Environment | Close the environment's `stdin` channel |
 | Ack | Environment | Management | Signal that the environment is now in the given state, or that the given command has been completed |
 | Custom | Management | Environment | Send a user defined message to the environment |
 
@@ -209,7 +209,8 @@ summarizes all of the messages related to managing individuals.
 | `"population"`  | String | Name of the population that this individual belongs to  |
 | `"parents"`     | List of Strings | The UUIDs of the parents. May be empty, especially if created by a "New" request |
 | `"controller"`  | List of Strings | Command line invocation of the controller program |
-| `"genome"`   | Anything | Genetic parameters for the new controller |
+| `"genome"`      | Anything | Genetic parameters for the new controller |
+
 
 ### Message Format ###
 
@@ -228,12 +229,12 @@ Words in ALL-CAPS are placeholders for runtime data.
 | `{"Mate":["UUID","UUID"]}\n` |
 | `{"New":"POPULATION"}\n` |
 | `"Pause"\n` |
-| `"Quit"\n` |
 | `"Resume"\n` |
 | `{"Save":"PATH"}\n` |
 | `{"Score":"VALUE","name":"UUID"}\n` |
 | `"Start"\n` |
 | `"Stop"\n` |
+| end of file |
 
 
 ### Schematic Diagram of the Environment Interface ###

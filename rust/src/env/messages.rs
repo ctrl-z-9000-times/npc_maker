@@ -40,10 +40,7 @@ pub enum Request {
     /// state from the given filesystem path.
     Load(String),
 
-    /// Demand the environment shuts down and exits as fast as possible. Do not
-    /// finish any work in progress and do not save any data. This instance of
-    /// the environment will not be resumed. Further messages sent to the NPC
-    /// Maker will be ignored.
+    /// The environment's standard input channel is closed.
     Quit,
 
     /// This message contains a new individual and its genome. The environment
