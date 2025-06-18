@@ -104,8 +104,7 @@ frame "The Environment Subprocess" as env_proc {
     ** "Stop"
     ** "Pause"
     ** "Resume"
-    ** "Heartbeat"
-    ** "Quit"
+    ** EOF
     ** {"Save": "PATH"}
     ** {"Load": "PATH"}
     ** {"Custom": JSON}

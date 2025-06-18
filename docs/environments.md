@@ -169,7 +169,6 @@ program.
 | Stop  | Management | Environment | Ask the environment to finish all work in progress, but to avoid beginning new work.  The environment may later be restarted |
 | Pause | Management | Environment | Ask the environment to temporarily pause, with the expectation that it will later be resumed. The environment should *immediately* cease all computationally expensive activities, though it should retain all allocated memory |
 | Resume | Management | Environment | Ask the environment to resume after a temporary pause |
-| Heartbeat | Management | Environment | The NPC Maker uses watchdog timers to manage unreliable environments. Heartbeat messages must be must acknowledge or else the environment will be considered timed out |
 | Save | Management | Environment | Save the current state of the environment to the given filesystem path, including the internal states of all control systems. Note that when the environment is reloaded in-flight messages might not be replayed |
 | Load | Management | Environment | Discard the current state of the environment and load a previously saved state from the given filesystem path |
 | Quit | Management | Environment | Close the environment's `stdin` channel |
@@ -223,7 +222,6 @@ Words in ALL-CAPS are placeholders for runtime data.
 | `{"Birth":{"name":"UUID","population":"POPULATION","parents":["UUID"],"controller":["COMMAND"],"genome":GENOME}}\n` |
 | `{"Custom":JSON}\n` |
 | `{"Death":"UUID"}\n` |
-| `"Heartbeat"\n` |
 | `{"Info":{"KEY":"VALUE"},"name":"UUID"}\n` |
 | `{"Load":"PATH"}\n` |
 | `{"Mate":["UUID","UUID"]}\n` |

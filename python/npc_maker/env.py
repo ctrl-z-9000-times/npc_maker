@@ -728,7 +728,7 @@ def ack(message):
     if "Birth" in message:
         pass # Birth messages shouldn't be acknowledged.
     else:
-        assert message in ("Custom","Heartbeat","Load","Pause","Quit","Resume","Save","Start","Stop")
+        assert message in ("Custom","Load","Pause","Quit","Resume","Save","Start","Stop")
         response = json.dumps({"Ack": message})
         _try_print(response)
 
@@ -923,9 +923,6 @@ class SoloAPI:
 
                 elif request == "Resume":
                     state = "Start"
-                    ack(request)
-
-                elif request == "Heartbeat":
                     ack(request)
 
                 elif request == "Save":

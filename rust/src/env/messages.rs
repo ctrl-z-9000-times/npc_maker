@@ -24,13 +24,6 @@ pub enum Request {
     /// Request for the environment to resume after a temporary pause.
     Resume,
 
-    /// The NPC Maker uses a watchdog timer system to manage unreliable
-    /// environments. The NPC Maker periodically sends a heartbeat message to
-    /// every instance of the environment and the environment must acknowledge
-    /// the heartbeat in a timely manner or else the NPC Maker will assume that
-    /// the environment has failed and will forcibly restart the environment.
-    Heartbeat,
-
     /// Save the current state of the environment to the given filesystem path,
     /// including the internal state of the control systems. Note that when the
     /// environment is reloaded any in-flight messages will not be replayed.
@@ -121,7 +114,6 @@ mod tests {
             Request::Stop,
             Request::Pause,
             Request::Resume,
-            Request::Heartbeat,
             Request::Save("/foo/ b a r /my_save.json".to_string()),
             Request::Load("./my_save.json".to_string()),
             Request::Quit,
@@ -222,7 +214,6 @@ mod tests {
         assert_eq!(serde_json::to_string(&Request::Stop).unwrap(), "\"Stop\"");
         assert_eq!(serde_json::to_string(&Request::Pause).unwrap(), "\"Pause\"");
         assert_eq!(serde_json::to_string(&Request::Resume).unwrap(), "\"Resume\"");
-        assert_eq!(serde_json::to_string(&Request::Heartbeat).unwrap(), "\"Heartbeat\"");
         assert_eq!(serde_json::to_string(&Request::Quit).unwrap(), "\"Quit\"");
 
         assert_eq!(
