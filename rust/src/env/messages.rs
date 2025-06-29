@@ -7,32 +7,6 @@ use std::collections::HashMap;
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub enum Request {
-    /// Request for the environment to start running.
-    Start,
-
-    /// Request for the environment to finish all work in progress.
-    /// The environment may continue sending messages to the NPC Maker,
-    /// but it will not be given any new individuals to evaluate.
-    Stop,
-
-    /// Request that the environment temporarily pause, with the expectation
-    /// that it will later be resumed. The environment should immediately cease
-    /// any computationally expensive activities, though it should retain all
-    /// allocated memory.
-    Pause,
-
-    /// Request for the environment to resume after a temporary pause.
-    Resume,
-
-    /// Save the current state of the environment to the given filesystem path,
-    /// including the internal state of the control systems. Note that when the
-    /// environment is reloaded any in-flight messages will not be replayed.
-    Save(String),
-
-    /// Discard the current state of the environment and load a previously saved
-    /// state from the given filesystem path.
-    Load(String),
-
     /// The environment's standard input channel is closed.
     Quit,
 
@@ -62,13 +36,6 @@ pub enum Request {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Response {
-    /// Signal that the environment is now in the given state,
-    /// or acknowledge that the given request has been completed.
-    Ack {
-        #[serde(rename = "Ack")]
-        ack: Request,
-    },
-
     /// Request a new individual from the evolutionary algorithm.
     New {
         #[serde(rename = "New", default)]
@@ -110,12 +77,6 @@ mod tests {
     #[test]
     fn message_roundtrip() {
         let all_requests = [
-            Request::Start,
-            Request::Stop,
-            Request::Pause,
-            Request::Resume,
-            Request::Save("/foo/ b a r /my_save.json".to_string()),
-            Request::Load("./my_save.json".to_string()),
             Request::Quit,
             Request::Birth {
                 population: "pop1".to_string(),
@@ -185,9 +146,6 @@ mod tests {
             Response::Death { name: "".to_string() },
             Response::Death { name: "99".to_string() },
         ];
-        for msg in &all_requests {
-            all_responses.push(Response::Ack { ack: msg.clone() });
-        }
 
         println!("REQUESTS:");
         for msg in all_requests {
@@ -210,20 +168,6 @@ mod tests {
     /// Check that the messages being sent to the environment are exactly as expected.
     #[test]
     fn send_string() {
-        assert_eq!(serde_json::to_string(&Request::Start).unwrap(), "\"Start\"");
-        assert_eq!(serde_json::to_string(&Request::Stop).unwrap(), "\"Stop\"");
-        assert_eq!(serde_json::to_string(&Request::Pause).unwrap(), "\"Pause\"");
-        assert_eq!(serde_json::to_string(&Request::Resume).unwrap(), "\"Resume\"");
-        assert_eq!(serde_json::to_string(&Request::Quit).unwrap(), "\"Quit\"");
-
-        assert_eq!(
-            serde_json::to_string(&Request::Save("foobar".to_string())).unwrap(),
-            r#"{"Save":"foobar"}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&Request::Load("foobar".to_string())).unwrap(),
-            r#"{"Load":"foobar"}"#
-        );
         assert_eq!(
             serde_json::to_string(&Request::Birth {
                 name: "1234".to_string(),
@@ -240,19 +184,11 @@ mod tests {
             .unwrap(),
             r#"{"Birth":{"name":"1234","population":"pop1","parents":["1020","1077"],"controller":["/usr/bin/q"],"genome":[{"name":6,"type":"foo"},{"name":7,"type":"bar"}]}}"#
         );
-        assert_eq!(
-            serde_json::to_string(&Request::Custom(serde_json::json!({"foo":"bar"}))).unwrap(),
-            r#"{"Custom":{"foo":"bar"}}"#
-        );
     }
 
     /// Check that the messages received from the environment are exactly as expected.
     #[test]
     fn recv_string() {
-        assert_eq!(
-            serde_json::to_string(&Response::Ack { ack: Request::Start }).unwrap(),
-            "{\"Ack\":\"Start\"}"
-        );
         assert_eq!(
             serde_json::to_string(&Response::New {
                 population: String::new()

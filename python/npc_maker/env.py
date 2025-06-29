@@ -16,7 +16,6 @@ import sys
 import time
 
 __all__ = (
-    "ack",
     "death",
     "Environment",
     "eprint",
@@ -361,62 +360,18 @@ class Environment:
             self.populations[population_name].death(individual)
         self.outstanding.clear()
 
-    def start(self):
-        """
-        Request to start the environment.
-        """
-        self._process.stdin.write(b'"Start"\n')
-        self._process.stdin.flush()
-
-    def stop(self):
-        """
-        Request to stop the environment.
-        """
-        self._process.stdin.write(b'"Stop"\n')
-        self._process.stdin.flush()
-
-    def pause(self):
-        """
-        Request to pause the environment.
-        """
-        self._process.stdin.write(b'"Pause"\n')
-        self._process.stdin.flush()
-
-    def resume(self):
-        """
-        Request to resume the environment.
-        """
-        self._process.stdin.write(b'"Resume"\n')
-        self._process.stdin.flush()
-
     def quit(self):
         """
         Tell the environment program to exit.
         """
         self._process.stdin.close()
 
-    def save(self, path):
-        """
-        Request to save the environment to the given path.
-        """
-        path = json.dumps(str(path))
-        self._process.stdin.write(f'{{"Save":"{path}"}}\n'.encode('utf-8'))
-        self._process.stdin.flush()
-
-    def load(self, path):
-        """
-        Request to load the environment from the given path.
-        """
-        path = json.dumps(str(path))
-        self._process.stdin.write(f'{{"Load":"{path}"}}\n'.encode('utf-8'))
-        self._process.stdin.flush()
-
     def custom(self, message):
         """
         Send a user defined JSON message to the environment.
         """
         message = json.dumps(message)
-        self._process.stdin.write(f'{{"Custom":{message}}}\n'.encode('utf-8'))
+        self._process.stdin.write(f'{message}\n'.encode('utf-8'))
         self._process.stdin.flush()
 
     def _birth(self, individual, parents):
@@ -509,62 +464,8 @@ class Environment:
                 population_name         = individual.get_population()
                 self.populations[population_name].death(individual)
 
-            elif "Ack" in message:
-                inner = message["Ack"]
-                if   inner == "Start":      self.on_start()
-                elif inner == "Stop":       self.on_stop()
-                elif inner == "Pause":      self.on_pause()
-                elif inner == "Resume":     self.on_resume()
-                elif inner == "Quit":       self.on_quit()
-                elif "Save" in inner:       self.on_save(inner["Save"])
-                elif "Load" in inner:       self.on_load(inner["Load"])
-                elif "Custom" in inner:     self.on_message(inner["Custom"])
-                elif "Birth" in inner:      pass
-                else:
-                    raise ValueError(f'unrecognized message "{message}"')
             else:
                 raise ValueError(f'unrecognized message "{message}"')
-
-    def on_start(self):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_stop(self):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_pause(self):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_resume(self):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_quit(self):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_save(self, path):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_load(self, path):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
-    def on_custom(self, message):
-        """
-        Callback hook for subclasses to implement.
-        Triggered by "ack" responses.
-        """
 
     @classmethod
     def run(cls, individuals, env_spec, mode='graphical', settings={}, stderr=sys.stderr):
@@ -597,7 +498,6 @@ class Environment:
         dispatchers = {population_name: Dispatcher(indiv_list)
                         for population_name, indiv_list in individuals.items()}
         env = cls(dispatchers, env_spec, mode, settings, stderr=stderr)
-        env.start()
         while env.is_alive():
             if outstanding <= 0 and exhausted:
                 break
@@ -607,7 +507,6 @@ class Environment:
                 exhausted = True
                 continue
             time.sleep(0.1)
-        env.quit()
         return {population_name: population.ascended
                 for population_name, population in dispatchers.items()}
 
@@ -720,18 +619,6 @@ def _try_print(*args, **kwargs):
         else:
             raise
 
-def ack(message):
-    """
-    Acknowledge that the given message has been received and successfully acted upon.
-    The environment may send ack's unprompted to signal unexpected changes.
-    """
-    if "Birth" in message:
-        pass # Birth messages shouldn't be acknowledged.
-    else:
-        assert message in ("Custom","Load","Pause","Quit","Resume","Save","Start","Stop")
-        response = json.dumps({"Ack": message})
-        _try_print(response)
-
 def new(population=None):
     """
     Request a new individual from this population's evolution API.
@@ -832,22 +719,6 @@ class SoloAPI:
         """
         pass
 
-    def save(self, path):
-        """
-        Abstract Method
-
-        Save the environment to the given path.
-        """
-        raise TypeError("abstract method called")
-
-    def load(self, path):
-        """
-        Abstract Method
-
-        Load the environment from the given path.
-        """
-        raise TypeError("abstract method called")
-
     def custom(self, message):
         """
         Abstract Method
@@ -890,57 +761,28 @@ class SoloAPI:
         controller = None
         cache = {} # command -> controller
         queue = collections.deque()
-        state = "Stop"
 
         def is_running():
-            has_work = queue or (controller is not None)
-            return (state == "Start" or state == "Stop") and has_work
+            return queue or (controller is not None)
+
+        for _ in range(buffer):
+            new(population)
 
         # Main Program Loop.
         while True:
 
             # Message Read Loop.
             while request := poll():
-                if request == "Start":
-                    state = "Start"
-                    for _ in range(buffer):
-                        new(population)
-                    ack(request)
-
-                elif "Birth" in request:
+                if "Birth" in request:
                     queue.append(request["Birth"])
 
-                elif "Custom" in request:
-                    self.custom(request["Custom"])
-                    ack(request)
-
-                elif request == "Stop":
-                    state = "Stop"
-
-                elif request == "Pause":
-                    state = "Pause"
-                    ack(request)
-
-                elif request == "Resume":
-                    state = "Start"
-                    ack(request)
-
-                elif request == "Save":
-                    self.save(request["Save"])
-                    ack(request)
-
-                elif request == "Load":
-                    self.load(request["Load"])
-                    ack(request)
-
                 elif request == "Quit":
-                    ack(request)
                     self.quit()
                     del self
                     return
 
                 else:
-                    eprint('Unrecognized request:', request)
+                    self.custom(request)
 
             if not is_running():
                 self.idle()
@@ -971,7 +813,4 @@ class SoloAPI:
                         score(name, final_score)
                         death(name)
                         controller = None
-                        if state == "Start":
-                            new(population)
-                        elif state == "Stop" and not queue:
-                            ack("Stop")
+                        new(population)

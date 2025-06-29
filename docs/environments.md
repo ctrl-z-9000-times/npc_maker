@@ -134,15 +134,11 @@ specification.
 
 ## Environment Protocol ##
 
-Environments are implemented as distinct programs that interact with the
-management program using the environment protocol. Communication happens over
-the environment's `stdin`, `stdout` and `stderr` file descriptors. The protocol
-uses simple human readable text messages and is designed to be easy to parse
-and forgiving of implementation errors. The protocol consists of JSON messages
-encoded with UTF-8. Each message occupies exactly one line of text and is
-terminated by the newline character "`\n`". In the event of unrecognized or
-invalid messages, all parties should attempt to recover and resume normal
-operation.
+The management program communicates with the environment over the it's `stdin`,
+`stdout` and `stderr` channels. The protocol consists of JSON messages encoded
+with UTF-8. Each message occupies exactly one line of text and is terminated by
+the newline character "`\n`". In the event of unrecognized or invalid messages,
+all parties should attempt to recover and resume normal operation.
 
 Regular messages are sent over the `stdin` and `stdout` channels. The `stderr`
 channel is reserved for communicating errors and diagnostic information from
@@ -150,52 +146,14 @@ the environment program to the management program. The `stderr` channel has no
 specific message format or protocol. By default environments inherit their
 `stderr` channel from the management program.
 
-
-### Program Control Messages ###
-
-The management program wants to control the state of execution of its
-environment programs. The following table summarizes all of the commands that
-the management program may send to the environment and the appropriate response
-for each command. The environment should send an "Ack" response only after it
-successfully completes the given command. Command should be performed and
-acknowledged in the order that they are received. If for any reason the
-environment needs to change into a state that was not commanded, then it should
-send the corresponding "Ack" response unprompted to inform the management
-program.
-
-| Message Type | Sender | Receiver | Description |
-| :----------- | :----: | :------: | :---------- |
-| Start | Management | Environment | Ask the environment to start running |
-| Stop  | Management | Environment | Ask the environment to finish all work in progress, but to avoid beginning new work.  The environment may later be restarted |
-| Pause | Management | Environment | Ask the environment to temporarily pause, with the expectation that it will later be resumed. The environment should *immediately* cease all computationally expensive activities, though it should retain all allocated memory |
-| Resume | Management | Environment | Ask the environment to resume after a temporary pause |
-| Save | Management | Environment | Save the current state of the environment to the given filesystem path, including the internal states of all control systems. Note that when the environment is reloaded in-flight messages might not be replayed |
-| Load | Management | Environment | Discard the current state of the environment and load a previously saved state from the given filesystem path |
-| Quit | Management | Environment | Close the environment's `stdin` channel |
-| Ack | Environment | Management | Signal that the environment is now in the given state, or that the given command has been completed |
-| Custom | Management | Environment | Send a user defined message to the environment |
-
-Environment programs should initialize to the "Stopped" state.
-
-The "Save" path may already exist, in which case the environment should simply
-overwrite the old file. The parent directory of the save file will always exist.
-The environment should never create a directory; if multiple files are needed
-then they should be zipped together into a single archive file.
-
-
-### Evolution Messages ###
-
 The environment program must request new individuals when it is ready to birth
-and evaluate them. New individuals will not be sent unsolicited. The NPC Maker
-framework will always service these requests in the order that they are
-received. These messages should not be acknowledged. The following table
-summarizes all of the messages related to managing individuals.
+and evaluate them. New individuals will not be sent unsolicited.
 
 | Message Type | Sender | Receiver | Description |
 | :----------- | :----: | :------: | :---------- |
+| Birth | Management | Environment | Send a new individual to the environment for immediate birth and subsequent evaluation |
 | New   | Environment | Management | Request a new individual from the evolutionary algorithm |
 | Mate  | Environment | Management | Request a new individual by mating individuals together. This requires at least one parent. This accepts more than two parents. All parents must be alive, in this environment, and of the same population |
-| Birth | Management | Environment | Send a new individual to the environment for immediate birth and subsequent evaluation. Birth messages should not be acknowledged |
 | Score | Environment | Management | Report the score or reproductive fitness of a living individual |
 | Info  | Environment | Management | Associate some extra information with a living individual. The info is kept alongside the individual in perpetuity |
 | Death | Environment | Management | Report the death of an individual |
@@ -218,24 +176,10 @@ Words in ALL-CAPS are placeholders for runtime data.
 
 | Message Format |
 | :------------- |
-| `{"Ack":MESSAGE}\n` |
 | `{"Birth":{"name":"UUID","population":"POPULATION","parents":["UUID"],"controller":["COMMAND"],"genome":GENOME}}\n` |
-| `{"Custom":JSON}\n` |
 | `{"Death":"UUID"}\n` |
 | `{"Info":{"KEY":"VALUE"},"name":"UUID"}\n` |
-| `{"Load":"PATH"}\n` |
 | `{"Mate":["UUID","UUID"]}\n` |
 | `{"New":"POPULATION"}\n` |
-| `"Pause"\n` |
-| `"Resume"\n` |
-| `{"Save":"PATH"}\n` |
 | `{"Score":"VALUE","name":"UUID"}\n` |
-| `"Start"\n` |
-| `"Stop"\n` |
-| end of file |
-
-
-### Schematic Diagram of the Environment Interface ###
-
-![Schematic Diagram](images/environment_interface.svg)
 

@@ -40,6 +40,8 @@ fn xor_test(ctrl: &mut Controller, verbose: bool) -> f64 {
 fn main() {
     let (env_spec, mode, _settings) = npc_maker::env::get_args();
 
+    env::new(Some("xor"));
+
     let mut ctrl: Option<Controller> = None;
 
     loop {
@@ -51,16 +53,7 @@ fn main() {
         match request {
             Request::Quit => break,
 
-            Request::Heartbeat | Request::Stop | Request::Pause => env::ack(&request),
-
-            Request::Save(_) | Request::Load(_) | Request::Custom(_) => {
-                // Save/Load are unimplemented for this environment, do nothing.
-            }
-
-            Request::Start | Request::Resume => {
-                env::ack(&request);
-                env::new(Some("xor"));
-            }
+            npc_maker::env::Request::Custom(_) => {}
 
             Request::Birth {
                 name,
