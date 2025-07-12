@@ -4,6 +4,7 @@ Evolutionary algorithms and supporting tools.
 
 from os.path import getmtime
 from pathlib import Path
+import copy
 import json
 import math
 import random
@@ -12,33 +13,13 @@ import tempfile
 import uuid
 
 __all__ = (
-    "API",
     "Genome",
+    "Epigenome",
     "Individual",
     "Evolution",
+    "Neat",
     "Replayer",
 )
-
-class API:
-    """
-    Abstract class for implementing evolutionary algorithms
-    and other similar parameter optimization techniques.
-    """
-    def birth(self, parents=[]) -> 'Individual':
-        """
-        Argument parents is a list of Individual objects.
-
-        Return a new Individual object with the "controller" and "genome"
-        attributes set. All other attributes are optional.
-        The genome may be any JSON-encodable python object.
-        """
-        raise TypeError("abstract method called")
-
-    def death(self, individual):
-        """
-        Notification of an individual's death.
-        """
-        raise TypeError("abstract method called")
 
 class Genome:
     """
@@ -46,13 +27,20 @@ class Genome:
     """
     def parameters(self) -> str:
         """
-        Serialize the genome into a single-line string for the control system.
+        Serialize the genome to send it to the control system.
+        The message must be a single-line.
         """
         raise TypeError("abstract method called")
 
+    def clone(self) -> 'Genome':
+        """
+        Create an identical copy of this genome.
+        """
+        return copy.deepcopy(self)
+
     def mate(self, other) -> 'Genome':
         """
-        Called when two individuals sexually reproduce.
+        Sexually reproduce these two genomes.
         """
         raise TypeError("abstract method called")
 
@@ -76,6 +64,16 @@ class Genome:
         """
         raise TypeError("abstract method called")
 
+class Epigenome(Genome):
+    """
+    Abstract class for implementing genetic algorithms with epigenetic modifications.
+    """
+    def parameters(self, epigenome) -> str:
+        raise TypeError("abstract method called")
+
+    def mate(self, epigenome, other, other_epigenome) -> 'Genome':
+        raise TypeError("abstract method called")
+
 class Individual:
     """
     Container for a distinct life-form and all of its associated data.
@@ -86,32 +84,40 @@ class Individual:
                 population=None,
                 controller=None,
                 score=None,
-                info={},
+                telemetry={},
+                epigenome={},
                 species=None,
-                parents=None,
-                children=None,
+                parents=0,
+                children=0,
                 birth_date=None,
                 death_date=None,
-                generation=None,
+                generation=0,
                 ascension=None,
-                **extras):
-        assert isinstance(genome, Genome)
-        self.name           = str(name) if name is not None else str(uuid.uuid4())
-        self.environment    = str(environment) if environment is not None else None
-        self.population     = str(population) if population is not None else None
+                path=None,
+                **extra):
+        self.name           = str(name)         if name is not None else str(uuid.uuid4())
+        self.environment    = str(environment)  if environment is not None else None
+        self.population     = str(population)   if population is not None else None
         self.controller     = _clean_ctrl_command(controller)
         self.genome         = genome
-        self.score          = score
-        self.info           = dict(info)
-        self.species        = str(species) if species is not None else None
-        self.parents        = parents
-        self.children       = children
-        self.birth_date     = birth_date
-        self.death_date     = death_date
-        self.generation     = generation
-        self.ascension      = ascension
-        self.extras         = extras
-        self.path           = None
+        self.score          = str(score)        if score is not None else None
+        self.telemetry      = dict(telemetry)
+        self.epigenome      = dict(epigenome)
+        self.species        = str(species)      if species is not None else str(uuid.uuid4())
+        self.parents        = int(parents)
+        self.children       = int(children)
+        self.birth_date     = str(birth_date)   if birth_date is not None else None
+        self.death_date     = str(death_date)   if death_date is not None else None
+        self.generation     = int(generation)
+        self.ascension      = int(ascension)    if ascension is not None else None
+        self.extra          = extra
+        self.path           = Path(path)        if path is not None else None
+
+    def get_name(self) -> str:
+        """
+        Get this individual's name, which is a UUID string.
+        """
+        return self.name
 
     def get_environment(self) -> str:
         """
@@ -124,14 +130,6 @@ class Individual:
         Get the name of this individual's population.
         """
         return self.population
-
-    def get_name(self) -> str:
-        """
-        Get this individual's name, which is a UUID string.
-
-        Note: individual's lose their name when they die.
-        """
-        return self.name
 
     def get_controller(self) -> list:
         """
@@ -152,7 +150,7 @@ class Individual:
         """
         return self.score
 
-    def get_custom_score(self, score_function) -> float:
+    def get_custom_score(self, score_function="score") -> float:
         """
         Apply a custom scoring function to this individual.
 
@@ -163,48 +161,54 @@ class Individual:
             * A callable function: f(individual) -> float,
             * The word "score",
             * The word "ascension",
-            * A key in the individual's info dictionary. The corresponding value
-              will be converted in to a float.
+            * A key in the individual's telemetry dictionary. The corresponding
+              value will be converted in to a float.
         """
         if callable(score_function):
             score = score_function(self)
         elif not score_function or score_function == "score":
             score = self.score
         elif score_function == "ascension":
-            if self.ascension is None:
-                score = math.nan
-            else:
-                score = self.ascension
-        elif score_function in self.info:
-            score = self.info[score_function]
+            score = self.ascension
+        elif score_function in self.telemetry:
+            score = self.telemetry[score_function]
         else:
             raise ValueError("unrecognized score function " + repr(score_function))
+        # 
+        if score is None:
+            score = math.nan
+        # 
         return float(score)
 
-    def get_info(self) -> dict:
+    def get_telemetry(self) -> dict:
         """
-        Get the current info.
+        Get the environmental info dictionary.
 
-        Note: this returns a reference to the individual's internal info dict.
-        Modifications will become a permanent part of the individual's info.
+        Returns a reference to the individual's internal "telemetry" dictionary,
+        modifications are permanent!
         """
-        return self.info
+        return self.telemetry
+
+    def get_epigenome(self) -> dict:
+        """
+        Get the epigenetic info dictionary.
+
+        Returns a reference to the individual's internal "epigenome" dictionary,
+        modifications are permanent!
+        """
+        return self.epigenome
 
     def get_species(self) -> str:
         """
         Get the species UUID.
 
-        This is assigned by the NEAT algorithm.
-        Mating is restricted to individuals with the same species.
+        Mating may be restricted to individuals of the same species.
         """
         return self.species
 
     def get_parents(self) -> int:
         """
         How many parents does this individual have?
-
-        Individuals created by "New" requests have zero parents.
-        Individuals created by "Mate" requests have one or more parents.
         """
         return self.parents
 
@@ -241,14 +245,14 @@ class Individual:
         """
         return self.ascension
 
-    def get_extras(self) -> dict:
+    def get_extra(self) -> dict:
         """
         Get any unrecognized fields that were found in the individual's JSON object.
 
         Returns a reference to this individual's internal data.
         Changes made to the returned value will persist with the individual.
         """
-        return self.extras
+        return self.extra
 
     def get_path(self) -> Path:
         """
@@ -256,6 +260,72 @@ class Individual:
         Returns None if this individual has not touched the file system.
         """
         return self.path
+
+    def get_parameters(self):
+        """
+        Serialize the genome into a single-line string for the control system.
+        """
+        if isinstance(self.genome, Epigenome):
+            return self.genome.parameters(self.epigenome)
+        elif isinstance(self.genome, Genome):
+            return self.genome.parameters()
+        else:
+            return self.genome
+
+    def clone(self):
+        """
+        Create an identical copy of this genome.
+        """
+        # Clone the genetic material.
+        if isinstance(self.genome, Genome):
+            clone_genome = self.genome.clone()
+        else:
+            clone_genome = copy.deepcopy(self.genome)
+        # Make a new individual with the copied genetics.
+        clone = Individual(clone_genome,
+                epigenome   = self.epigenome,
+                environment = self.environment,
+                population  = self.population,
+                species     = self.species,
+                controller  = self.controller,
+                generation  = self.generation + 1,
+                parents     = 1)
+        self.children += 1
+        return clone
+
+    def mate(self, other, speciation_distance=None):
+        """
+        Sexually reproduce these two individuals.
+        """
+        # Mate the genetic material.
+        if isinstance(self.genome, Epigenome):
+            child_genome = self.genome.mate(self.epigenome, other.genome, other.epigenome)
+        elif isinstance(self.genome, Genome):
+            child_genome = self.genome.mate(other.genome)
+        else:
+            raise TypeError(f"expected npc_maker.evo.Genome, found {type(self.genome)}")
+        # Determine which species the child belongs to.
+        if speciation_distance is None:
+            species = self.species
+        else:
+            species = None
+            for parent in (self, other):
+                if parent.genome.distance(child_genome) < speciation_distance:
+                    species = parent.species
+                    break
+        # 
+        child = Individual(child_genome,
+                environment = self.environment,
+                population  = self.population,
+                species     = species,
+                controller  = self.controller,
+                generation  = max(self.generation, other.generation) + 1,
+                parents     = (1 if self == other else 2))
+        # Update the parent's child count.
+        self.children += 1
+        if self != other:
+            other.children += 1
+        return child
 
     def save(self, path) -> Path:
         """
@@ -277,24 +347,31 @@ class Individual:
         path = Path(path)
         assert path.is_dir()
         path = path.joinpath(filename + ".json")
-        # Unofficial fields, in case of conflict these take lowest precedence.
-        data = dict(self.extras)
+        # Unofficial fields, in case of conflict these take lower precedence.
+        data = dict(self.extra)
         # Required fields.
-        data["genome"] = self.genome.save()
+        if isinstance(self.genome, Genome):
+            data["genome"]  = self.genome.save()
+        else:
+            data["genome"]  = self.genome
+        data["telemetry"]   = self.telemetry
+        data["epigenome"]   = self.epigenome
+        data["parents"]     = self.parents
+        data["children"]    = self.children
+        data["species"]     = self.species
+        data["generation"]  = self.generation
         # Optional fields.
-        if self.ascension is not None:   data["ascension"]   = self.ascension
-        if self.birth_date is not None:  data["birth_date"]  = self.birth_date
-        if self.children is not None:    data["children"]    = self.children
-        if self.controller is not None:  data["controller"]  = list(self.controller)
-        if self.death_date is not None:  data["death_date"]  = self.death_date
-        if self.environment is not None: data["environment"] = self.environment
-        if self.info is not None:        data["info"]        = self.info
         if self.name is not None:        data["name"]        = self.name
-        if self.parents is not None:     data["parents"]     = self.parents
+        if self.ascension is not None:   data["ascension"]   = self.ascension
+        if self.environment is not None: data["environment"] = self.environment
         if self.population is not None:  data["population"]  = self.population
+        if self.controller is not None:  data["controller"]  = self.controller
         if self.score is not None:       data["score"]       = self.score
+        if self.birth_date is not None:  data["birth_date"]  = self.birth_date
+        if self.death_date is not None:  data["death_date"]  = self.death_date
         # Convert paths to strings for JSON serialization.
         if self.controller is not None:
+            data["controller"]    = list(data["controller"])
             data["controller"][0] = str(data["controller"][0])
         # 
         self.path = path
@@ -303,37 +380,20 @@ class Individual:
         return path
 
     @classmethod
-    def load(cls, genome_cls, path, **individual_attributes) -> 'Individual':
+    def load(cls, path, genome_cls) -> 'Individual':
         """
         Load a previously saved individual.
         """
         path = Path(path)
         with open(path, 'rt') as file:
-            return json.load(file)
+            data = json.load(file)
+        # Update the path.
+        data["path"] = path
+        # Unpack the user's genome.
+        if genome is not None:
+            data["genome"] = genome_cls.load(data["genome"])
         # 
-        genome = genome_cls(data.pop("genome"))
-        individual = cls.load(genome, **individual_attributes)
-        individual.path = path
-        # Keyword arguments preempt the saved data.
-        for field in individual_attributes:
-            data.pop(field, None)
-        # Load optional fields.
-        individual.ascension   = data.pop("ascension",   individual.ascension)
-        individual.birth_date  = data.pop("birth_date",  individual.birth_date)
-        individual.children    = data.pop("children",    individual.children)
-        individual.controller  = data.pop("controller",  individual.controller)
-        individual.death_date  = data.pop("death_date",  individual.death_date)
-        individual.environment = data.pop("environment", individual.environment)
-        individual.info        = data.pop("info",        individual.info)
-        individual.name        = data.pop("name",        individual.name)
-        individual.parents     = data.pop("parents",     individual.parents)
-        individual.population  = data.pop("population",  individual.population)
-        individual.score       = data.pop("score",       individual.score)
-        # Convert controller program from string to path.
-        individual.controller = _clean_ctrl_command(individual.controller)
-        # Preserve any unrecognized fields in case the user wants them later.
-        individual.extras.update(data)
-        return individual
+        return cls(**data)
 
 def _clean_ctrl_command(command):
     if command is None:
@@ -352,6 +412,89 @@ def _clean_ctrl_command(command):
         if not isinstance(arg, bytes) and not isinstance(arg, str):
             command[index] = str(arg)
     return command
+
+class Evolution:
+    """
+    Abstract class for implementing evolutionary algorithms
+    and other similar parameter optimization techniques.
+    """
+    def birth(self, parents=[]) -> Individual:
+        """
+        Argument parents is a list of Individual objects.
+
+        Return a new Individual object with the "controller" and "genome"
+        attributes set. All other attributes are optional.
+        The genome may be any JSON-encodable python object.
+        """
+        raise TypeError("abstract method called")
+
+    def death(self, individual):
+        """
+        Notification of an individual's death.
+        """
+        raise TypeError("abstract method called")
+
+class Replayer(API):
+    """
+    Replay saved individuals
+    """
+    def __init__(self, path, select="Random", score="score"):
+        """
+        Argument path is the directory containing the saved individuals.
+                 Individuals must have the file extension ".json"
+
+        Argument select is a mate selection algorithm.
+
+        Argument score is an optional custom scoring function.
+        """
+        self._path          = Path(path).expanduser().resolve()
+        self._select        = select
+        self._score         = score
+        self._population    = [] # List of paths.
+        self._scores        = [] # Runs parallel to the population list.
+        self._buffer        = [] # Queue of selected individuals wait to be born.
+
+    def path(self):
+        return self._path
+
+    def get_population(self):
+        """
+        Returns a list of file paths.
+        """
+        self._scan()
+        return self._population
+
+    def birth(self, parents=[]):
+        self._scan()
+        if not self._buffer:
+            buffer_size = max(128, len(self._population))
+            indices = self._select.select(buffer_size, self._scores)
+            self._buffer = [self._population[i] for i in indices]
+        path = self._buffer.pop()
+        individual = Individual.load(path)
+        return [individual.get_genome(), individual.get_info()]
+
+    def death(self, individual):
+        pass
+
+    def _scan(self):
+        if getattr(self, "_scan_time", -1) == getmtime(self._path):
+            return
+        content = [p for p in self._path.iterdir() if p.suffix.lower() == ".json"]
+        content.sort()
+        if content == self._population:
+            return
+        self._population = content
+        self._scan_time = getmtime(self._path)
+        self._calc_scores()
+        self._buffer.clear()
+
+    def _calc_scores(self):
+        self._scores = []
+        for path in self._population:
+            individual = Individual.load(path)
+            score = individual.get_custom_score(self._score)
+            self._scores.append(score)
 
 class _Recorder:
     def __init__(self, path, leaderboard, hall_of_fame):
@@ -498,69 +641,7 @@ class _Recorder:
         """
         return list(self._hall_of_fame_data)
 
-class Replayer(API):
-    """
-    Replay saved individuals
-    """
-    def __init__(self, path, select="Random", score="score"):
-        """
-        Argument path is the directory containing the saved individuals.
-                 Individuals must have the file extension ".json"
-
-        Argument select is a mate selection algorithm.
-
-        Argument score is an optional custom scoring function.
-        """
-        self._path          = Path(path).expanduser().resolve()
-        self._select        = select
-        self._score         = score
-        self._population    = [] # List of paths.
-        self._scores        = [] # Runs parallel to the population list.
-        self._buffer        = [] # Queue of selected individuals wait to be born.
-
-    def path(self):
-        return self._path
-
-    def get_population(self):
-        """
-        Returns a list of file paths.
-        """
-        self._scan()
-        return self._population
-
-    def birth(self, parents=[]):
-        self._scan()
-        if not self._buffer:
-            buffer_size = max(128, len(self._population))
-            indices = self._select.select(buffer_size, self._scores)
-            self._buffer = [self._population[i] for i in indices]
-        path = self._buffer.pop()
-        individual = Individual.load(path)
-        return [individual.get_genome(), individual.get_info()]
-
-    def death(self, individual):
-        pass
-
-    def _scan(self):
-        if getattr(self, "_scan_time", -1) == getmtime(self._path):
-            return
-        content = [p for p in self._path.iterdir() if p.suffix.lower() == ".json"]
-        content.sort()
-        if content == self._population:
-            return
-        self._population = content
-        self._scan_time = getmtime(self._path)
-        self._calc_scores()
-        self._buffer.clear()
-
-    def _calc_scores(self):
-        self._scores = []
-        for path in self._population:
-            individual = Individual.load(path)
-            score = individual.get_custom_score(self._score)
-            self._scores.append(score)
-
-class Evolution(API, _Recorder):
+class Neat(Evolution, _Recorder):
     """
     """
     def __init__(self, seed,
@@ -601,13 +682,12 @@ class Evolution(API, _Recorder):
                  Individuals are saved into the directory: path/hall_of_fame
         """
         # Clean and save the arguments.
-        self.individual_class       = type(seed)
+        assert isinstance(seed, Individual)
         self.population_size        = int(population_size)
         self.speciation_distance    = float(speciation_distance)
         self.species_distribution   = species_distribution
         self.mate_selection         = mate_selection
         self.score_function         = score_function
-        assert isinstance(self.individual_class, Individual)
         assert self.population_size     > 0
         assert self.speciation_distance > 0
         _Recorder.__init__(self, path, leaderboard, hall_of_fame)
@@ -616,22 +696,13 @@ class Evolution(API, _Recorder):
         self._generation    = 0 # Generation counter.
         self._species       = [] # Pairs of (avg-score, members-list), the current mating population.
         self._parents       = [] # Pairs of individuals, buffer of potential mates.
+        self._elites        = [] # Exemplars of each species from the previous generation, waiting to be cloned into the next generation.
         self._waiting       = [] # Evaluated individuals, the next generation.
-        self._seed_species(seed)
-
-    def _seed_species(self, seed):
+        self._stagnant      = {} # Species stagnation data: pairs of (high-score, generations)
         # Create the first generation by mating the seed with itself.
-        species_uuid = str(uuid.uuid4())
-        species_members = []
-        for _ in range(self.population_size):
-            genome = seed.mate(seed)
-            individual = self.individual_class(genome,
-                    species=species_uuid,
-                    score=0.0,
-                    parents=2,
-                    generation=self.get_generation())
-            species_members.append(individual)
-        self._species.append((0.0, species_members))
+        if seed.score is None:
+            seed.score = 0.0
+        self._species.append((seed.score, [seed]))
 
     def get_ascension(self) -> int:
         """
@@ -645,43 +716,67 @@ class Evolution(API, _Recorder):
         """
         return self._generation
 
+    def _score(self, individual):
+        return individual.get_custom_score(self.score_function)
+
     def _rollover(self):
         """
         Discard the old generation and move the next generation into its place.
         """
         # Sort the next generation into its species.
-        self._waiting.sort(key=lambda x: x.get_species())
-        # Scan for contiguous ranges of the same species.
+        self._waiting.sort(key=lambda individual: individual.get_species())
         self._species.clear()
-        prev_uuid = None
-        score = 0 # Accumulator for calculating the average score.
+        # Scan for contiguous ranges of the same species.
+        prev_uuid = self._waiting[0].get_species()
         members = []
+        def close_species():
+            nonlocal members
+            score = sum(self._score(individual) for individual in members) / len(members)
+            self._species.append((score, members))
+            members = []
+        # 
         for individual in self._waiting:
             uuid = individual.get_species()
             # Close out the previous species.
             if uuid != prev_uuid:
-                self._species.push((score / len(members), members))
-                # Start the next span of species
-                members = []
-                score = 0
+                close_species()
                 prev_uuid = uuid
             # 
             members.append(individual)
-            score += individual.get_custom_score(self.score_function)
         # Close out the final species.
-        self._species.push((score / len(members), members))
+        close_species()
+        # Update the species stagnation info.
+        remove_species = []
+        for index, (_, members) in enumerate(self._species):
+            species = members[0].get_species()
+            high_score = max(self._score(individual) for individual in members)
+            if species not in self._stagnant or high_score > self._stagnant[species][0]:
+                self._stagnant[species] = [high_score, 0]
+            else:
+                self._stagnant[species][1] += 1
+                if self._stagnant[species][1] >= 15:
+                    remove_species.append(index)
+        for index in reversed(remove_species):
+            self._species.pop(index)
+        # Clone and reevaluate the best individuals from each species.
+        self._elites.clear()
+        for (_, members) in self._species:
+            if len(members) >= 5:
+                best = max(members, key=self._score)
+                self._elites.append(best)
         # Reset in preparation for the next generation.
         self._parents.clear()
         self._waiting.clear()
         self._generation += 1
         if self._hall_of_fame: self._settle_hall_of_fame()
+        # 
+        if not self._species:
+            raise RuntimeError("total extinction")
 
     def _sample(self):
         """
         Refill the _parents buffer.
         """
-        if self._parents:
-            return
         # Distribute the offspring to species according to their average score.
         scores = [score for (score, members) in self._species]
         selected = self.species_distribution.select(self.population_size, scores)
@@ -690,8 +785,12 @@ class Evolution(API, _Recorder):
         for x in selected:
             histogram[x] += 1
         # Sample parents from each species.
-        for (num_offspring, (score, members)) in zip(histogram, self._species):
-            scores = [individual.get_score() for individual in members]
+        for (num_offspring, (_, members)) in zip(histogram, self._species):
+            # Cull species when they get too small.
+            if num_offspring <= 1:
+                continue
+            # 
+            scores = [self._score(individual) for individual in members]
             for pair in self.mate_selection.pairs(num_offspring, scores):
                 self._parents.append([members[index] for index in pair])
         # 
@@ -702,33 +801,28 @@ class Evolution(API, _Recorder):
         if len(self._waiting) >= self.population_size:
             self._rollover()
         # 
-        if not self._parents:
+        if not self._parents and not self._elites:
             self._sample()
-        # Get the parents and mate them together.
-        parents = self._parents.pop()
-        child = parents[0].mate(parents[1])
         # 
-        if not isinstance(child, Individual):
-            child = self.individual_class(genome, parents=2, generation=self.get_generation())
-        # Determine which species the child belongs to.
-        for parent in parents:
-            if parent.distance(child) < self.speciation_distance:
-                child.species = parent.species
-                break
+        if self._elites:
+            return self._elites.pop().clone()
+
+        elif random.random() < 0.25:
+            parent, _ = self._parents.pop()
+            return parent.mate(parent, self.speciation_distance)
+
         else:
-            child.species = str(uuid.uuid4())
-        # Update the parent's child count.
-        for parent in parents:
-            parent.children += 1
-        # 
-        return child
+            mother, father = self._parents.pop()
+            if self._score(father) > self._score(mother):
+                mother, father = father, mother
+            return mother.mate(father, self.speciation_distance)
 
     def death(self, individual):
         if individual is None:
             return
-        assert isinstance(individual, self.individual_class)
+        assert isinstance(individual, Individual)
         # Replace the individual's name with its ascension number.
-        individual.name = None
+        individual.name      = None
         individual.ascension = self._ascension
         self._ascension += 1
         # Ignore individuals who die without a valid score.
@@ -737,4 +831,4 @@ class Evolution(API, _Recorder):
             return
         # 
         self._waiting.append(individual)
-        _Recorder._record_death(individual, score)
+        self._record_death(individual, score)

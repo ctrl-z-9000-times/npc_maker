@@ -28,14 +28,13 @@ the attributes of individual objects.
 | `"controller"`  | List of Strings | Command line invocation of the controller program |
 | `"genome"`      | Anything  | Genetic parameters for this AI agent |
 | `"score"`       | String    | Reproductive fitness of this individual, as assessed by the environment |
-| `"info"`        | Map of Strings to Strings | The info dictionary, with all of the environment's accumulated updates |
+| `"telemetry"`   | Map of Strings to Strings | The environmental info dictionary |
+| `"epigenome"`   | Map of Strings to Strings | The epigenetic info dictionary |
 | `"parents"`     | Number    | Number of parents |
 | `"children"`    | Number    | Number of children |
+| `"generation"`  | Number    | Number of generations that came before this individual |
 | `"birth_date"`  | String    | UTC timestamp taken by the management process |
 | `"death_date"`  | String    | UTC timestamp taken by the management process |
-
-The available attributes change over the life cycle of an individual, except for
-the genome. The genome is always available.
 
 
 ## Birth ##
