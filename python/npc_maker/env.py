@@ -20,7 +20,7 @@ __all__ = (
     "Environment",
     "eprint",
     "get_args",
-    "info",
+    "telemetry",
     "mate",
     "new",
     "poll",
@@ -450,11 +450,11 @@ class Environment:
                 individual  = self.outstanding[name]
                 individual.score = score
 
-            elif "Info" in message:
-                info        = message["Info"]
+            elif "Telemetry" in message:
+                info        = message["Telemetry"]
                 name        = message["name"]
                 individual  = self.outstanding[name]
-                individual.info.update(info)
+                individual.telemetry.update(info)
 
             elif "Death" in message:
                 name                    = message["Death"]
@@ -647,7 +647,7 @@ def score(name, score):
     score = str(score)
     _try_print(json.dumps({"Score": score, "name": name}))
 
-def info(name, info):
+def telemetry(name, info):
     """
     Report extra information about an individual.
 
@@ -655,7 +655,7 @@ def info(name, info):
     """
     name = str(name)
     info = {str(key) : str(value) for key, value in info.items()}
-    _try_print(json.dumps({"Info": info, "name": name}))
+    _try_print(json.dumps({"Telemetry": info, "name": name}))
 
 def death(name):
     """

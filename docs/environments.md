@@ -155,7 +155,7 @@ and evaluate them. New individuals will not be sent unsolicited.
 | New   | Environment | Management | Request a new individual from the evolutionary algorithm |
 | Mate  | Environment | Management | Request a new individual by mating individuals together. This requires at least one parent. This accepts more than two parents. All parents must be alive, in this environment, and of the same population |
 | Score | Environment | Management | Report the score or reproductive fitness of a living individual |
-| Info  | Environment | Management | Associate some extra information with a living individual. The info is kept alongside the individual in perpetuity |
+| Telemetry | Environment | Management | The environment associates some extra information with a living individual. The info is kept alongside the individual in perpetuity |
 | Death | Environment | Management | Report the death of an individual |
 
 "**Birth**" messages contain the following information about the new individual:
@@ -178,7 +178,7 @@ Words in ALL-CAPS are placeholders for runtime data.
 | :------------- |
 | `{"Birth":{"name":"UUID","population":"POPULATION","parents":["UUID"],"controller":["COMMAND"],"genome":GENOME}}\n` |
 | `{"Death":"UUID"}\n` |
-| `{"Info":{"KEY":"VALUE"},"name":"UUID"}\n` |
+| `{"Telemetry":{"KEY":"VALUE"},"name":"UUID"}\n` |
 | `{"Mate":["UUID","UUID"]}\n` |
 | `{"New":"POPULATION"}\n` |
 | `{"Score":"VALUE","name":"UUID"}\n` |

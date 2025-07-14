@@ -20,12 +20,12 @@ environment, which should simply invoke it in a subprocess or at a shell.
 ## Standard Input Channel ##
 
 The environment sends the controller commands and data over its standard input
-channel. Messages are plain text encoded in UTF-8. Each message is one line
-long. The first character of the line encodes the message type and should be
-split off. The remainder of the line is the message body. Messages should be
-acted upon in the order that they are received. The following table summarizes
-the message types. The parts of the message format that are written in
-`[ALL_CAPS_AND_BRACKETS]` are placeholders for runtime data.
+channel. Messages are encoded in both UTF-8 and binary. The messages format is
+a single line beginning with a single character encoding the message type, and
+possibly followed by a binary blob. Messages should be acted upon in the order
+that they are received. The following table summarizes the message types. The
+parts of the message format that are written in `[ALL_CAPS_AND_BRACKETS]` are
+placeholders for runtime data.
 
 In all messages the `[GIN]` argument is a non-negative integer which identifies
 a sensor or motor interface. The interfaces are described in the environment
