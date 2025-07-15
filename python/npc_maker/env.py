@@ -255,7 +255,7 @@ class Environment:
         Start running an environment program.
 
         Argument populations is a dict of evolution API instances, indexed by population name.
-                 Every population must have a corresponding instance of npc_maker.evo.API.
+                 Every population must have a corresponding instance of npc_maker.evo.Evolution.
 
         Argument env_spec is the filesystem path of the environment specification.
 
@@ -275,13 +275,13 @@ class Environment:
         # Special case for when there is exactly one population.
         populations_spec = self.env_spec["populations"]
         if len(populations_spec) == 1:
-            if isinstance(populations, npc_maker.evo.API):
+            if isinstance(populations, npc_maker.evo.Evolution):
                 populations = {populations_spec[0]["name"]: populations}
         # Clean the populations argument.
         self.populations = dict(populations)
         all_population_names = set(pop["name"] for pop in populations_spec)
         assert set(self.populations.keys()) == all_population_names
-        assert all(isinstance(instance, npc_maker.evo.API) for instance in self.populations.values())
+        assert all(isinstance(instance, npc_maker.evo.Evolution) for instance in self.populations.values())
         # Clean the display mode argument.
         self.mode = str(mode).strip().lower()
         assert self.mode in ('graphical', 'headless')
@@ -390,11 +390,13 @@ class Environment:
         if ctrl is None:
             raise ValueError("indiviual is missing controller")
         ctrl[0] = str(ctrl[0]) # Convert Path to String
+        assert isinstance(genome, bytes)
         # Process the request.
         self.outstanding[name] = individual
         self._process.stdin.write('{{"Birth":{{"name":"{}","population":"{}","parents":{},"controller":{},"genome":{}}}}}\n'
-            .format(name, pop, json.dumps(parents), json.dumps(ctrl), json.dumps(genome))
+            .format(name, pop, json.dumps(parents), json.dumps(ctrl), len(genome))
             .encode("utf-8"))
+        self._process.stdin.write(genome)
         individual.birth_date = _timestamp()
 
     def poll(self):
@@ -482,7 +484,7 @@ class Environment:
         """
         outstanding = 0 # Birth count - death count.
         exhausted = False # Has at least one iterator ended?
-        class Dispatcher(npc_maker.evo.API):
+        class Dispatcher(npc_maker.evo.Evolution):
             def __init__(self, individuals):
                 self.iter = iter(individuals)
                 self.ascended = []
@@ -601,6 +603,11 @@ def poll():
     except json.decoder.JSONDecodeError as err:
         eprint(f"JSON syntax error in \"{message}\" {err}")
         return None
+    # 
+    if "Birth" in message:
+        num_bytes = int(message["genome"])
+        genome = sys.stdin.read(num_bytes)
+        message["genome"] = genome
     # 
     return message
 
@@ -795,7 +802,6 @@ class SoloAPI:
                     request    = queue.popleft()
                     name       = request["name"]
                     command    = request["controller"]
-                    genome     = json.dumps(request["genome"])
                     # Reuse controller instances if able.
                     if controller is None:
                         controller = cache.get(tuple(command))
@@ -804,7 +810,7 @@ class SoloAPI:
                         controller = npc_maker.ctrl.Controller(env_spec, population, command)
                         cache[tuple(command)] = controller
                     assert controller.is_alive()
-                    controller.genome(genome)
+                    controller.genome(request["genome"])
 
                 # Advance Controller One Step.
                 if controller is not None:

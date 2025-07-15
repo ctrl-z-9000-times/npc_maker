@@ -14,13 +14,9 @@ and running the environment.
 
 Environments always execute in a different computer process than the main
 program of the NPC Maker framework, which is referred to as
-the "**management**" program. This separation has many advantages. It allows
-the NPC Maker to tolerate unreliable environments and recover from environment
-crashes. This design also allows the environment to be implemented
-independently of the management program. The user can create their own
-environments written in the programming language of their choice. Finally, this
-design allows multiple instances of the environment to run concurrently and on
-multiple computers.
+the "**management**" program. This separation has many advantages, chiefly that
+user can create and control environments using the programming language of
+their choice.
 
 
 ## Environment Specification ##
@@ -135,30 +131,20 @@ specification.
 ## Environment Protocol ##
 
 The management program communicates with the environment over the it's `stdin`,
-`stdout` and `stderr` channels. The protocol consists of JSON messages encoded
-with UTF-8. Each message occupies exactly one line of text and is terminated by
-the newline character "`\n`". In the event of unrecognized or invalid messages,
-all parties should attempt to recover and resume normal operation.
+`stdout` and `stderr` channels. In the event of unrecognized or invalid
+messages, all parties should attempt to recover and resume normal operation.
 
-Regular messages are sent over the `stdin` and `stdout` channels. The `stderr`
-channel is reserved for communicating errors and diagnostic information from
-the environment program to the management program. The `stderr` channel has no
-specific message format or protocol. By default environments inherit their
-`stderr` channel from the management program.
 
-The environment program must request new individuals when it is ready to birth
-and evaluate them. New individuals will not be sent unsolicited.
+### Standard Input Channel ###
 
-| Message Type | Sender | Receiver | Description |
-| :----------- | :----: | :------: | :---------- |
-| Birth | Management | Environment | Send a new individual to the environment for immediate birth and subsequent evaluation |
-| New   | Environment | Management | Request a new individual from the evolutionary algorithm |
-| Mate  | Environment | Management | Request a new individual by mating individuals together. This requires at least one parent. This accepts more than two parents. All parents must be alive, in this environment, and of the same population |
-| Score | Environment | Management | Report the score or reproductive fitness of a living individual |
-| Telemetry | Environment | Management | The environment associates some extra information with a living individual. The info is kept alongside the individual in perpetuity |
-| Death | Environment | Management | Report the death of an individual |
+The management program sends new individuals to the environment. The environment
+must request new individuals; new individuals will not be sent unsolicited.
 
-"**Birth**" messages contain the following information about the new individual:
+Individuals are transmitted in two parts. First metadata is encoded in UTF-8
+JSON and written as a single line. Then the genome is written as a binary
+blob, whose length is stored in the metadata.
+
+The metadata contains the following information about the new individual:
 
 | Attribute | JSON Type | Description |
 | :-------- | :-------: | :---------- |
@@ -166,20 +152,28 @@ and evaluate them. New individuals will not be sent unsolicited.
 | `"population"`  | String | Name of the population that this individual belongs to  |
 | `"parents"`     | List of Strings | The UUIDs of the parents. May be empty, especially if created by a "New" request |
 | `"controller"`  | List of Strings | Command line invocation of the controller program |
-| `"genome"`      | Anything | Genetic parameters for the new controller |
+| `"genome"`      | Number | Number of bytes in the genome |
 
 
-### Message Format ###
+### Standard Output Channel ###
 
-Each message occupies exactly one line, and is encoded in the UTF-8 JSON format.  
-Words in ALL-CAPS are placeholders for runtime data.  
+The environment sends commands and data to the management program. Each
+message occupies exactly one line, and is encoded in the UTF-8 JSON format.
+Words in ALLCAPS are placeholders for runtime data.  
 
-| Message Format |
-| :------------- |
-| `{"Birth":{"name":"UUID","population":"POPULATION","parents":["UUID"],"controller":["COMMAND"],"genome":GENOME}}\n` |
-| `{"Death":"UUID"}\n` |
-| `{"Telemetry":{"KEY":"VALUE"},"name":"UUID"}\n` |
-| `{"Mate":["UUID","UUID"]}\n` |
-| `{"New":"POPULATION"}\n` |
-| `{"Score":"VALUE","name":"UUID"}\n` |
+| Message Type | Message Format | Description |
+| :----------- | :------------- | :---------- |
+| New   | `{"New":"POPULATION"}\n` | Request a new individual from the evolutionary algorithm |
+| Mate  | `{"Mate":["UUID","UUID"]}\n` | Request a new individual by mating individuals together. This requires at least one parent. This accepts more than two parents. All parents must be alive, in this environment, and members of the same population |
+| Score | `{"Score":"VALUE","name":"UUID"}\n` | Report the score or reproductive fitness of a living individual |
+| Telemetry | `{"Telemetry":{"KEY":"VALUE"},"name":"UUID"}\n` | The environment associates some extra information with a living individual. The info is kept alongside the individual in perpetuity |
+| Death | `{"Death":"UUID"}\n` | Report the death of an individual |
+
+
+### Standard Error Channel ###
+
+The `stderr` channel is reserved for communicating errors and diagnostic
+information from the environment program to the management program. The
+`stderr` channel has no specific message format or protocol. By default
+environments inherit their `stderr` channel from their management program.
 

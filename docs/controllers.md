@@ -43,15 +43,12 @@ The `[GIN]` arguments identify sensor and motor interfaces.
 ## Standard Output Channel ##
 
 The controller sends output values to the environment over its standard output
-channel. Output values should only be sent in response to a request for them.
-Each output message is a single line of UTF-8 text, beginning with the GIN of
-the output, a separating colon, and followed the output value until the next
-newline character "`\n`".
+channel. Output messages should only be sent in response to specific requests.
 
 |  Message Type | Message Format | Arguments |
 | :------------ | :------------- | :-------- |
 | Send Output   | `O[GIN]\n[VALUE]\n` | `[GIN]` references a requested motor output interface. `[VALUE]` is a UTF-8 string |
-| Save | `S[NUM]\n[BYTES]` |  |
+| Save State | `S[NUM]\n[BYTES]` |  |
 
 
 ## Standard Error Channel ##

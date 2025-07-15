@@ -266,11 +266,16 @@ class Individual:
         Serialize the genome into a single-line string for the control system.
         """
         if isinstance(self.genome, Epigenome):
-            return self.genome.parameters(self.epigenome)
+            parameters = self.genome.parameters(self.epigenome)
         elif isinstance(self.genome, Genome):
-            return self.genome.parameters()
+            parameters = self.genome.parameters()
         else:
-            return self.genome
+            parameters = self.genome
+        # Check data type.
+        if isinstance(parameters, str):
+            parameters = parameters.encode("utf-8")
+        assert isinstance(parameters, bytes)
+        return parameters
 
     def clone(self):
         """
@@ -350,10 +355,6 @@ class Individual:
         # Unofficial fields, in case of conflict these take lower precedence.
         data = dict(self.extra)
         # Required fields.
-        if isinstance(self.genome, Genome):
-            data["genome"]  = self.genome.save()
-        else:
-            data["genome"]  = self.genome
         data["telemetry"]   = self.telemetry
         data["epigenome"]   = self.epigenome
         data["parents"]     = self.parents
@@ -377,23 +378,29 @@ class Individual:
         self.path = path
         with open(path, 'wt') as file:
             json.dump(data, file)
+        # 
+        if isinstance(self.genome, Genome):
+            genome = self.genome.save()
+        else:
+            genome = self.genome
+        with open(path, 'ab') as file:
+            file.write(b'\x00')
+            file.write(genome)
         return path
 
     @classmethod
-    def load(cls, path, genome_cls) -> 'Individual':
+    def load(cls, genome, path) -> 'Individual':
         """
         Load a previously saved individual.
         """
         path = Path(path)
-        with open(path, 'rt') as file:
-            data = json.load(file)
-        # Update the path.
-        data["path"] = path
-        # Unpack the user's genome.
-        if genome is not None:
-            data["genome"] = genome_cls.load(data["genome"])
-        # 
-        return cls(**data)
+        with open(path, 'rb') as file:
+            data = file.read()
+        text, binary = data.split(b'\x00', maxsplit=1)
+        metadata = json.loads(text)
+        genome = genome.load(binary)
+        metadata["path"] = path
+        return cls(genome, **metadata)
 
 def _clean_ctrl_command(command):
     if command is None:
@@ -434,7 +441,7 @@ class Evolution:
         """
         raise TypeError("abstract method called")
 
-class Replayer(API):
+class Replayer(Evolution):
     """
     Replay saved individuals
     """

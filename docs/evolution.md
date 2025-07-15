@@ -12,31 +12,6 @@ The evolution API has two methods: birth and death, which mark the beginning and
 end of an individual's life cycle.
 
 
-## Individuals ##
-
-The "**individual**" is a bundle of metadata that is associated with each
-genome. Individuals are represented as JSON-encodable objects. Unexpected
-attributes are allowed and preserved as able. The following table summarizes
-the attributes of individual objects.
-
-| Attribute  | JSON Type | Description |
-| :--------  | :-------: | :---------- |
-| `"name"`        | String    | UUID of this individual |
-| `"ascension"`   | Number    | Number of individuals who died before this one |
-| `"environment"` | String    | Name of the environment that this individual lives in |
-| `"population"`  | String    | Name of this population that this individual belongs to |
-| `"controller"`  | List of Strings | Command line invocation of the controller program |
-| `"genome"`      | Anything  | Genetic parameters for this AI agent |
-| `"score"`       | String    | Reproductive fitness of this individual, as assessed by the environment |
-| `"telemetry"`   | Map of Strings to Strings | The environmental info dictionary |
-| `"epigenome"`   | Map of Strings to Strings | The epigenetic info dictionary |
-| `"parents"`     | Number    | Number of parents |
-| `"children"`    | Number    | Number of children |
-| `"generation"`  | Number    | Number of generations that came before this individual |
-| `"birth_date"`  | String    | UTC timestamp taken by the management process |
-| `"death_date"`  | String    | UTC timestamp taken by the management process |
-
-
 ## Birth ##
 
 The birth method generates new genomes. Environments may suggest specific
@@ -47,27 +22,45 @@ are optional.
 
 _method signature:_ `instance.birth(self, parents: list-of-individuals) -> individual`
 
-Open-ended evolutionary algorithms typically do the following, depending on how
-many parents are provided:
-
-| Number of Parents | Suggested Response |
-| :---------------: | :----------------- |
-|   0  | Create a new seed denovo |
-|   1  | Reproduce asexually      |
-|  >1  | Reproduce sexually       |
-
 
 ## Death ##
 
-The death method is used to remove an individual from an environment and give it
+The death method removes an individual from an environment and gives it
 back to the evolution API instance that created it. Environments should call
 this method when an AI agent dies.
 
 _method signature:_ `instance.death(self, individual)`
 
-The death method can assume that given individuals originated from the same instance's birth method.
+The death method can assume that given individuals originated from the same
+instance's birth method. The birth method can **not** assume that all of the
+individuals it produces will eventually be given to the death method.
 
-The birth method can **not** assume that all of the individuals it produces will
-eventually be given to the death method. For example if an environment
-program crashes then all of the individuals contained in it will be lost.
+
+## Individuals ##
+
+The "**individual**" contains a genome and an associated bundle of metadata.
+The genome is stored as a binary blob; the metadata is stored as a JSON object.
+Unexpected metadata is allowed and preserved as able. The following table
+defines the standard metadata attributes:
+
+| Attribute  | JSON Type | Description |
+| :--------  | :-------: | :---------- |
+| `"name"`        | String    | UUID of this individual |
+| `"ascension"`   | Number    | Number of individuals who died before this one |
+| `"environment"` | String    | Name of the environment that this individual lives in |
+| `"population"`  | String    | Name of this population that this individual belongs to |
+| `"controller"`  | List of Strings | Command line invocation of the controller program |
+| `"score"`       | String    | Reproductive fitness of this individual, as assessed by the environment |
+| `"telemetry"`   | Map of Strings to Strings | The environmental info dictionary |
+| `"epigenome"`   | Map of Strings to Strings | The epigenetic info dictionary |
+| `"parents"`     | Number    | Number of parents |
+| `"children"`    | Number    | Number of children |
+| `"generation"`  | Number    | Number of generations that came before this individual |
+| `"birth_date"`  | String    | UTC timestamp taken by the management process |
+| `"death_date"`  | String    | UTC timestamp taken by the management process |
+
+The file format for individuals is:
+1) The metadata, as a utf-8 JSON formatted string
+2) A single NULL character, \x00
+3) The genome, as a binary array until end of file
 
