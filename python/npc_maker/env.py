@@ -366,14 +366,6 @@ class Environment:
         """
         self._process.stdin.close()
 
-    def custom(self, message):
-        """
-        Send a user defined JSON message to the environment.
-        """
-        message = json.dumps(message)
-        self._process.stdin.write(f'{message}\n'.encode('utf-8'))
-        self._process.stdin.flush()
-
     def _birth(self, individual, parents):
         """
         Send an individual to the environment.
@@ -393,7 +385,7 @@ class Environment:
         assert isinstance(genome, bytes)
         # Process the request.
         self.outstanding[name] = individual
-        self._process.stdin.write('{{"Birth":{{"name":"{}","population":"{}","parents":{},"controller":{},"genome":{}}}}}\n'
+        self._process.stdin.write('{{"name":"{}","population":"{}","parents":{},"controller":{},"genome":{}}}\n'
             .format(name, pop, json.dumps(parents), json.dumps(ctrl), len(genome))
             .encode("utf-8"))
         self._process.stdin.write(genome)
@@ -604,10 +596,9 @@ def poll():
         eprint(f"JSON syntax error in \"{message}\" {err}")
         return None
     # 
-    if "Birth" in message:
-        num_bytes = int(message["genome"])
-        genome = sys.stdin.read(num_bytes)
-        message["genome"] = genome
+    num_bytes = int(message["genome"])
+    genome = sys.stdin.read(num_bytes)
+    message["genome"] = genome
     # 
     return message
 
@@ -726,14 +717,6 @@ class SoloAPI:
         """
         pass
 
-    def custom(self, message):
-        """
-        Abstract Method
-
-        Receive a user defined message.
-        """
-        raise TypeError("abstract method called")
-
     def quit(self):
         """
         Abstract Method, Optional
@@ -780,16 +763,10 @@ class SoloAPI:
 
             # Message Read Loop.
             while request := poll():
-                if "Birth" in request:
-                    queue.append(request["Birth"])
+                if request == "Quit":
+                    break
 
-                elif request == "Quit":
-                    self.quit()
-                    del self
-                    return
-
-                else:
-                    self.custom(request)
+                queue.append(request)
 
             if not is_running():
                 self.idle()
@@ -820,3 +797,4 @@ class SoloAPI:
                         death(name)
                         controller = None
                         new(population)
+        self.quit()

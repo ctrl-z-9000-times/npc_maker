@@ -6,6 +6,7 @@ This tests all combinations of programming languages.
 
 from pathlib import Path
 import npc_maker.env
+import json
 import time
 
 repo = Path(__file__).parent.parent.parent
@@ -30,6 +31,8 @@ solution = [
     {"name": 8, "type": "Edge", "presyn": 3, "postsyn": 2, "weight": -4.0},
     {"name": 10, "type": "Edge", "presyn": 0, "postsyn": 3, "weight": 1.0},
     {"name": 11, "type": "Edge", "presyn": 1, "postsyn": 3, "weight": 1.0}]
+
+solution = json.dumps(solution).encode("utf-8")
 
 def test_solution():
     for env_path in environments:

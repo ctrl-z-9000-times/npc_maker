@@ -118,7 +118,9 @@ class Controller:
 
         Argument value is a byte array
         """
-        value = bytes(value)
+        if isinstance(value, str):
+            value = bytes(value, encoding="utf-8")
+        assert isinstance(value, bytes)
         self._ctrl.stdin.write("G{}\n".format(len(value)).encode("utf-8"))
         self._ctrl.stdin.write(value)
 
@@ -179,7 +181,7 @@ class Controller:
         # Receive the outputs.
         outputs = {}
         while len(outputs) < len(gin_list):
-            message = self._ctrl.stdout.readline().lstrip()
+            message = self._ctrl.stdout.readline().lstrip().decode("utf-8")
             if not message:
                 continue
             msg_type = message[0].upper()
