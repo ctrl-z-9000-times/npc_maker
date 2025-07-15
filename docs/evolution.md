@@ -56,8 +56,8 @@ defines the standard metadata attributes:
 | `"parents"`     | Number    | Number of parents |
 | `"children"`    | Number    | Number of children |
 | `"generation"`  | Number    | Number of generations that came before this individual |
-| `"birth_date"`  | String    | UTC timestamp taken by the management process |
-| `"death_date"`  | String    | UTC timestamp taken by the management process |
+| `"birth_date"`  | String    | UTC timestamp |
+| `"death_date"`  | String    | UTC timestamp |
 
 The file format for individuals is:
 1) The metadata, as a utf-8 JSON formatted string

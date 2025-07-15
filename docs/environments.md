@@ -1,22 +1,22 @@
 # The Environment Interface #
 
-This chapter describes the interface between management programs and environments.
+This chapter describes the interface between evolution programs and environments.
 The NPC Maker is capable of interacting with almost any simulated environment.
 The word "**environment**" refers to a self contained simulated world and
 everything in it, including all of the living bodies and their control systems. 
 The NPC Maker defines a standard interface for interacting with arbitrary
 environments. Users are encouraged to add their own environments.
 
+Environments always execute in a different computer process than the main
+program of the NPC Maker framework, which is referred to as
+the "**evolution**" program. This separation has many advantages, chiefly that
+user can create and control environments using the programming language of
+their choice.
+
 Environments have two parts: a static description and an executable program.
 The static description contains all of the information needed to configure and
 run the environment. The executable program does the actual work of setting up
 and running the environment.
-
-Environments always execute in a different computer process than the main
-program of the NPC Maker framework, which is referred to as
-the "**management**" program. This separation has many advantages, chiefly that
-user can create and control environments using the programming language of
-their choice.
 
 
 ## Environment Specification ##
@@ -130,14 +130,14 @@ specification.
 
 ## Environment Protocol ##
 
-The management program communicates with the environment over the it's `stdin`,
+The evolution program communicates with the environment over the it's `stdin`,
 `stdout` and `stderr` channels. In the event of unrecognized or invalid
 messages, all parties should attempt to recover and resume normal operation.
 
 
 ### Standard Input Channel ###
 
-The management program sends new individuals to the environment. The environment
+The evolution program sends new individuals to the environment. The environment
 must request new individuals; new individuals will not be sent unsolicited.
 
 Individuals are transmitted in two parts. First metadata is encoded in UTF-8
@@ -157,7 +157,7 @@ The metadata contains the following information about the new individual:
 
 ### Standard Output Channel ###
 
-The environment sends commands and data to the management program. Each
+The environment sends commands and data to the evolution program. Each
 message occupies exactly one line, and is encoded in the UTF-8 JSON format.
 Words in ALLCAPS are placeholders for runtime data.  
 
@@ -173,7 +173,7 @@ Words in ALLCAPS are placeholders for runtime data.
 ### Standard Error Channel ###
 
 The `stderr` channel is reserved for communicating errors and diagnostic
-information from the environment program to the management program. The
+information from the environment program to the evolution program. The
 `stderr` channel has no specific message format or protocol. By default
-environments inherit their `stderr` channel from their management program.
+environments inherit their `stderr` channel from their evolution program.
 

@@ -570,7 +570,7 @@ def get_args():
 
 def poll():
     """
-    Check for messages from the management program.
+    Check for messages from the evolution program.
 
     Callers *must* call the `get_args()` function before using this,
     for initialization purposes.
@@ -750,7 +750,7 @@ class SoloAPI:
         Argument buffer is the number of individuals to request at once.
 
         This function handles communications between the environment
-        (this program) and the management program, which execute in separate
+        (this program) and the evolution program, which execute in separate
         computer processes and communicate over the environment's standard I/O
         channels.
 
