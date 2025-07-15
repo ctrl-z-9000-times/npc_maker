@@ -116,11 +116,11 @@ class Controller:
         Initialize the control system with a new genome.
         This discards the currently loaded model.
 
-        Argument value is a string occupying a single line
+        Argument value is a byte array
         """
-        value = str(value)
-        assert '\n' not in value
-        self._ctrl.stdin.write("G{}\n".format(value).encode("utf-8"))
+        value = bytes(value)
+        self._ctrl.stdin.write("G{}\n".format(len(value)).encode("utf-8"))
+        self._ctrl.stdin.write(value)
 
     def reset(self):
         """
@@ -135,7 +135,7 @@ class Controller:
         Argument dt is in units of seconds.
         """
         dt = float(dt)
-        self._ctrl.stdin.write("X{}\n".format(dt).encode("utf-8"))
+        self._ctrl.stdin.write("A{}\n".format(dt).encode("utf-8"))
 
     def set_input(self, gin, value):
         """
@@ -145,7 +145,7 @@ class Controller:
         gin   = int(gin)
         assert '\n' not in value
         assert gin >= 0
-        self._ctrl.stdin.write("I{}:{}\n".format(gin, value).encode("utf-8"))
+        self._ctrl.stdin.write("I{}\n{}\n".format(gin, value).encode("utf-8"))
 
     def set_binary(self, gin, binary):
         """
@@ -155,7 +155,7 @@ class Controller:
         gin = int(gin)
         assert isinstance(binary, bytes)
         assert gin >= 0
-        self._ctrl.stdin.write("B{}:{}\n".format(gin, len(binary)).encode("utf-8"))
+        self._ctrl.stdin.write("B{}\n{}\n".format(gin, len(binary)).encode("utf-8"))
         self._ctrl.stdin.write(binary)
 
     def get_outputs(self, gin_list):
@@ -180,32 +180,39 @@ class Controller:
         outputs = {}
         while len(outputs) < len(gin_list):
             message = self._ctrl.stdout.readline().lstrip()
-            if not message: continue
-            gin, value   = message.split(b":", maxsplit=1)
-            gin          = int(gin)
+            if not message:
+                continue
+            msg_type = message[0].upper()
+            msg_body = message[1:]
+            assert msg_type == 'O'
+            gin = int(msg_body)
+            value = self._ctrl.stdout.readline()
             outputs[gin] = value.decode("utf-8")
-        # assert set(outputs) == set(gin_list)
+        assert set(outputs) == set(gin_list)
         if return_list:
             return outputs
         else:
             return outputs.popitem()[1]
 
-    def save(self, path):
+    def save(self):
         """
-        Save the current state of the controller to file.
+        Request the current state of the controller.
         """
         path = Path(path)
         assert '\n' not in str(path)
-        self._ctrl.stdin.write("S{}\n".format(path).encode("utf-8"))
+        self._ctrl.stdin.write(b"S\n")
         self._ctrl.stdin.flush()
+        # TODO: Wait for the controller's response.
+        raise NotImplementedError
+        return save_state
 
-    def load(self, path):
+    def load(self, save_state):
         """
-        Load the state of the controller from file.
+        Load a previously saved controller.
         """
-        path = Path(path)
-        assert '\n' not in str(path)
-        self._ctrl.stdin.write("L{}\n".format(path).encode("utf-8"))
+        assert isinstance(save_state, bytes)
+        self._ctrl.stdin.write("L{}\n".format(len(save_state)).encode("utf-8"))
+        self._ctrl.stdin.write(save_state)
 
     def custom(self, message_type, message_body):
         """
@@ -213,7 +220,7 @@ class Controller:
         """
         message_type = str(message_type).strip().upper()
         assert len(message_type) == 1
-        assert message_type not in "EPGRXIBOSL"
+        assert message_type not in "EPGRAIBOSL"
         message_body = str(message_body)
         assert '\n' not in message_body
         self._ctrl.stdin.write("{}{}\n".format(message_type, message_body).encode("utf-8"))
@@ -292,10 +299,6 @@ class API:
         """
         Run a controller program.
 
-        This function handles communications between the controller (this program)
-        and the environment, which execute in separate computer processes and
-        communicate over the controller's standard I/O channels.
-
         This function never returns!
         """
         global _environment, _population
@@ -306,25 +309,24 @@ class API:
                 break
 
             if msg_type == "I":
-                gin, value = msg_body.split(":", maxsplit=1)
-                gin = int(gin)
+                gin   = int(msg_body)
+                value = _readline()
                 self.set_input(gin, value)
 
             elif msg_type == "O":
                 gin   = int(msg_body)
                 value = str(self.get_output(gin))
                 assert '\n' not in value
-                reply = f"{gin}:{value}"
+                reply = f"O{gin}\n{value}"
                 print(reply, flush=True)
 
             elif msg_type == "B":
-                gin, num_bytes  = msg_body.split(":")
-                gin             = int(gin)
-                num_bytes       = int(num_bytes)
+                gin             = int(msg_body)
+                num_bytes       = _readline()
                 binary          = _readbytes(num_bytes)
                 self.set_binary(gin, binary)
 
-            elif msg_type == "X":
+            elif msg_type == "A":
                 dt = float(msg_body)
                 self.advance(dt)
 
@@ -332,7 +334,9 @@ class API:
                 self.reset()
 
             elif msg_type == "G":
-                self.genome(_environment, _population, msg_body)
+                num_bytes = int(msg_body)
+                binary    = _readbytes(num_bytes)
+                self.genome(_environment, _population, binary)
 
             elif msg_type == "E":
                 _environment = Path(msg_body)
@@ -341,12 +345,15 @@ class API:
                 _population = msg_body
 
             elif msg_type == "S":
-                save_path = Path(msg_body)
-                self.load(save_path)
+                save_state = self.save()
+                sys.stdout.buffer.write("S{}\n".format(len(save_state)).encode("utf-8"))
+                sys.stdout.buffer.write(save_state)
+                sys.stdout.buffer.flush()
 
             elif msg_type == "L":
-                load_path = Path(msg_body)
-                self.load(load_path)
+                num_bytes  = int(msg_body)
+                save_state = _readbytes(num_bytes)
+                self.load(save_state)
 
             else:
                 self.custom(msg_type, msg_body)
@@ -418,24 +425,19 @@ class API:
         """
         raise TypeError("abstract method called")
 
-    def save(self, path: Path):
+    def save(self) -> bytes:
         """
         Abstract Method
 
-        Save the current state of the controller to file.
-
-        Argument path is the filesystem path to save to. If the file already
-        exists then overwrite it. The parent directory will always exist.
+        Return the current state of the controller.
         """
         raise TypeError("unsupported operation")
 
-    def load(self, path: Path):
+    def load(self, save_state: bytes):
         """
         Abstract Method
 
-        Load the state of a controller from file.
-
-        Argument path is the filesystem path to load from.
+        Load a previously saved controller state.
         """
         raise TypeError("unsupported operation")
 

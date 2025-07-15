@@ -1,12 +1,10 @@
 # The Controller Interface #
 
 This chapter describes the interface between the environments and the control
-systems for the agents inside of them. The interface is designed to be flexible
-and error-tolerant. Users can implement custom control systems using this
-interface. Implementations of the controller interface are referred to
-as "**controllers**". Each controller is its own distinct computer program,
-which executes in its own computer process and communicates with the
-environment over its standard I/O channels in plain text.
+systems for the agents inside of them. Implementations of the controller
+interface are referred to as "**controllers**". Each controller is its own
+distinct computer program, which executes in its own computer process and
+communicates with the environment over its standard I/O channels.
 
 
 ## Command Line Invocation ##
@@ -20,29 +18,24 @@ environment, which should simply invoke it in a subprocess or at a shell.
 ## Standard Input Channel ##
 
 The environment sends the controller commands and data over its standard input
-channel. Messages are encoded in both UTF-8 and binary. The messages format is
-a single line beginning with a single character encoding the message type, and
-possibly followed by a binary blob. Messages should be acted upon in the order
-that they are received. The following table summarizes the message types. The
-parts of the message format that are written in `[ALL_CAPS_AND_BRACKETS]` are
-placeholders for runtime data.
-
-In all messages the `[GIN]` argument is a non-negative integer which identifies
-a sensor or motor interface. The interfaces are described in the environment
-specifications.
+channel. Messages should be acted upon in the order that they are received. The
+following table summarizes the message types. The parts of the message format
+written in `[ALL_CAPS_AND_BRACKETS]` are placeholders for runtime data. In all
+messages the `[NUM]` and `[BYTES]` arguments form a binary array. 
+The `[GIN]` arguments identify sensor and motor interfaces.
 
 |  Message Type | Message Format | Arguments | Description |
 | :------------ | :------------- | :-------- | ----------- |
 | Environment | `E[ENV_SPEC]\n` | `[ENV_SPEC]` is the filesystem path of the environment specification file | This message is always sent exactly once at the controller's startup, before any other messages |
 | Population | `P[POPULATION]\n` | `[POPULATION]` is a name and a key into the environment specification's "populations" table | This message is always sent exactly once at the controller's startup, before any other messages |
-| Genome | `G[GENOME]\n` | `[GENOME]` are the parameters for the new controller. The genome is a UTF-8 string, occupying a single line | Discard the current model and load a new one |
+| Genome | `G[NUM]\n[BYTES]` | The parameters for the new controller | Discard the current model and load a new one |
 | Reset | `R\n` |  | Reset the currently loaded model to it's initial state |
-| Advance | `X[DT]\n` | `[DT]` is the time period to advance over, measured in seconds |  |
-| Set Input | `I[GIN]:[VALUE]\n` | `[GIN]` references a sensory input interface. `[VALUE]` is a UTF-8 string | Send data from the environment to the controller |
-| Set Binary Input   | `B[GIN]:[NUM]\n`<br>`[BYTES]` | `[GIN]` references a binary sensory input interface. `[BYTES]` is a byte array of length `[NUM]`. It must be read in binary mode | Send an array of bytes from the environment to the controller |
+| Advance | `A[DT]\n` | `[DT]` is the time period to advance over, measured in seconds | Advance the state of the controller |
+| Set Input | `I[GIN]\n[VALUE]\n` | `[GIN]` references a sensory input interface. `[VALUE]` is a UTF-8 string | Send data from the environment to the controller |
+| Set Binary Input | `B[GIN]\n[NUM]\n[BYTES]` | `[GIN]` references a binary sensory input interface. `[BYTES]` is a byte array of length `[NUM]`. It must be read in binary mode | Send an array of bytes from the environment to the controller |
 | Get Output | `O[GIN]\n` | `[GIN]` references a motor output interface | Request for the controller to send an output to the environment |
-| Save | `S[PATH]\n` | `[PATH]` is the filesystem path to save to. If the file already exists then overwrite it. The parent directory will always exist | Save the current state of the controller to file |
-| Load | `L[PATH]\n` | `[PATH]` is the filesystem path to load from | Load the state of the controller from file |
+| Save | `S\n` |  | Request for the controller to send its current state to the environment |
+| Load | `L[NUM]\n[BYTES]` |  | Load the state of a previously saved controller |
 | Custom Message | `[TYPE][MESSAGE]\n` | `[TYPE]` is a single capital letter, which is not already in use by the protocol. `[MESSAGE]` may be any UTF-8 string | Send a custom message to the controller using a new message type |
 | Quit | End of File |  | Stop running the controller process. Exit as soon as possible |
 
@@ -57,7 +50,8 @@ newline character "`\n`".
 
 |  Message Type | Message Format | Arguments |
 | :------------ | :------------- | :-------- |
-| Send Output   | `[GIN]:[VALUE]\n` | `[GIN]` references a requested motor output interface. `[VALUE]` is a UTF-8 string |
+| Send Output   | `O[GIN]\n[VALUE]\n` | `[GIN]` references a requested motor output interface. `[VALUE]` is a UTF-8 string |
+| Save | `S[NUM]\n[BYTES]` |  |
 
 
 ## Standard Error Channel ##
