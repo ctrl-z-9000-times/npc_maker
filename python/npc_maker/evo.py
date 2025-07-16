@@ -389,7 +389,7 @@ class Individual:
         return path
 
     @classmethod
-    def load(cls, genome, path) -> 'Individual':
+    def load(cls, genome_cls, path) -> 'Individual':
         """
         Load a previously saved individual.
         """
@@ -398,7 +398,7 @@ class Individual:
             data = file.read()
         text, binary = data.split(b'\x00', maxsplit=1)
         metadata = json.loads(text)
-        genome = genome.load(binary)
+        genome = genome_cls.load(binary)
         metadata["path"] = path
         return cls(genome, **metadata)
 
@@ -603,7 +603,7 @@ class _Recorder:
         if not self._leaderboard_data:
             return None
         (score, neg_ascension, path) = max(self._leaderboard_data)
-        return Individual.load(path)
+        return Individual.load(self.genome_cls, path)
 
     def _load_hall_of_fame(self):
         self._hall_of_fame_data         = []
@@ -690,6 +690,7 @@ class Neat(Evolution, _Recorder):
         """
         # Clean and save the arguments.
         assert isinstance(seed, Individual)
+        self.genome_cls             = type(seed.genome)
         self.population_size        = int(population_size)
         self.speciation_distance    = float(speciation_distance)
         self.species_distribution   = species_distribution

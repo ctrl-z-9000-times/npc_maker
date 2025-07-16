@@ -52,9 +52,9 @@ struct NeuralNetwork {
 }
 
 impl API for NeuralNetwork {
-    fn genome(&mut self, _env: &std::path::Path, _pop: &str, genome: String) {
+    fn genome(&mut self, _env: &std::path::Path, _pop: &str, genome: Box<[u8]>) {
         //
-        let mut genome: Vec<Chromosome> = serde_json::from_str(&genome).unwrap();
+        let mut genome: Vec<Chromosome> = serde_json::from_slice(&genome).unwrap();
         genome.sort_unstable_by_key(|x| x.name());
         //
         self.names = genome

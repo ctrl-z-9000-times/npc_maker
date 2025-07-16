@@ -8,7 +8,7 @@
 //! By default, controllers inherit stderr from the environment.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, BufWriter, Error, ErrorKind, Result, Write};
+use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
@@ -105,9 +105,9 @@ impl Controller {
     /// This discards the currently loaded model.  
     ///
     /// Argument value must be a single line.  
-    pub fn genome(&mut self, value: &str) -> Result<()> {
-        debug_assert!(!value.contains('\n'));
-        writeln!(self.stdin, "G{value}")?;
+    pub fn genome(&mut self, value: &[u8]) -> Result<()> {
+        writeln!(self.stdin, "G{}", value.len())?;
+        self.stdin.write_all(value)?;
         Ok(())
     }
 
@@ -119,20 +119,20 @@ impl Controller {
 
     /// Advance the control system's internal state.
     pub fn advance(&mut self, dt: f64) -> Result<()> {
-        writeln!(self.stdin, "X{dt}")?;
+        writeln!(self.stdin, "A{dt}")?;
         Ok(())
     }
 
     /// Write a single value to a GIN in the controller.
     pub fn set_input(&mut self, gin: u64, value: &str) -> Result<()> {
         debug_assert!(!value.contains('\n'));
-        writeln!(self.stdin, "I{gin}:{value}")?;
+        writeln!(self.stdin, "I{gin}\n{value}")?;
         Ok(())
     }
 
     /// Write an array of bytes to a GIN in the controller.
     pub fn set_binary(&mut self, gin: u64, value: &[u8]) -> Result<()> {
-        writeln!(self.stdin, "B{gin}:{}", value.len())?;
+        writeln!(self.stdin, "B{gin}:\n{}", value.len())?;
         self.stdin.write_all(value)?;
         Ok(())
     }
@@ -161,26 +161,26 @@ impl Controller {
     }
 
     /// Save the current state of the control system to file.
-    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref().to_str().unwrap();
-        debug_assert!(!path.contains('\n'));
-        writeln!(self.stdin, "S{path}")?;
+    pub fn save(&mut self) -> Result<()> {
+        writeln!(self.stdin, "S")?;
         self.stdin.flush()?;
+
+        todo!(); // Block until response
+
         Ok(())
     }
 
     ///  Load the state of the control system from file.
-    pub fn load(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let path = path.as_ref().to_str().unwrap();
-        debug_assert!(!path.contains('\n'));
-        writeln!(self.stdin, "L{path}")?;
+    pub fn load(&mut self, save_state: &[u8]) -> Result<()> {
+        writeln!(self.stdin, "L{}", save_state.len())?;
+        self.stdin.write_all(save_state)?;
         Ok(())
     }
 
     /// Send a custom message to the controller using a new message type.
     pub fn custom(&mut self, message_type: char, message_body: &str) -> Result<()> {
         debug_assert!(message_type == message_type.to_ascii_uppercase());
-        debug_assert!(!"EPGRXIBOSL".contains(message_type));
+        debug_assert!(!"EPGRAIBOSL".contains(message_type));
         debug_assert!(!message_body.contains('\n'));
         writeln!(self.stdin, "{message_type}{message_body}")?;
         Ok(())
@@ -189,19 +189,19 @@ impl Controller {
 
 /// Structure of all messages sent from environments to controllers.
 ///
-/// These messages are transmitted over the controller stdin channel.
+/// These messages are transmitted over the controller's stdin channel.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Message {
     Environment { environment: PathBuf },
     Population { population: String },
-    Genome { value: String },
+    Genome { value: Box<[u8]> },
     Reset,
     Advance { dt: f64 },
     SetInput { gin: u64, value: String },
-    SetBinary { gin: u64, bytes: Vec<u8> },
+    SetBinary { gin: u64, value: Box<[u8]> },
     GetOutput { gin: u64 },
-    Save { path: PathBuf },
-    Load { path: PathBuf },
+    Save,
+    Load { save_state: Box<[u8]> },
     Custom { message_type: char, body: String },
     Quit,
 }
@@ -214,29 +214,35 @@ impl Message {
 
             Self::Population { population } => writeln!(writer, "P{population}")?,
 
-            Self::Genome { value } => writeln!(writer, "G{value}")?,
+            Self::Genome { value } => {
+                writeln!(writer, "G{}", value.len())?;
+                writer.write_all(value)?
+            }
 
             Self::Reset => writeln!(writer, "R")?,
 
-            Self::Advance { dt } => writeln!(writer, "X{dt}")?,
+            Self::Advance { dt } => writeln!(writer, "A{dt}")?,
 
-            Self::SetInput { gin, value } => writeln!(writer, "I{gin}:{value}")?,
+            Self::SetInput { gin, value } => writeln!(writer, "I{gin}\n{value}")?,
 
-            Self::SetBinary { gin, bytes } => writeln!(writer, "B{gin}:{}", bytes.len())?,
+            Self::SetBinary { gin, value } => {
+                writeln!(writer, "B{gin}\n{}", value.len())?;
+                writer.write_all(value)?
+            }
 
             Self::GetOutput { gin } => writeln!(writer, "O{gin}")?,
 
-            Self::Save { path } => writeln!(writer, "S{}", path.to_str().unwrap())?,
+            Self::Save => writeln!(writer, "S")?,
 
-            Self::Load { path } => writeln!(writer, "L{}", path.to_str().unwrap())?,
+            Self::Load { save_state } => {
+                writeln!(writer, "L{}", save_state.len())?;
+                writer.write_all(save_state)?
+            }
 
             Self::Custom { message_type, body } => writeln!(writer, "{}{}", message_type, body)?,
 
             Self::Quit => {}
         };
-        if let Self::SetBinary { bytes, .. } = self {
-            writer.write_all(bytes.as_slice())?;
-        }
         Ok(())
     }
 
@@ -254,44 +260,44 @@ impl Message {
         let msg_body = &line[msg_type.len_utf8()..];
         let msg_data = match msg_type.to_ascii_uppercase() {
             'E' => Self::Environment {
-                environment: msg_body.into(),
+                environment: msg_body.trim().into(),
             },
             'P' => Self::Population {
-                population: msg_body.to_string(),
+                population: msg_body.trim().to_string(),
             },
-            'G' => Self::Genome {
-                value: msg_body.to_string(),
-            },
+            'G' => {
+                let num_bytes = msg_body.trim().parse::<usize>().unwrap();
+                let value = read_bytes(reader, num_bytes)?;
+                Self::Genome { value }
+            }
             'R' => Self::Reset,
             'I' => {
-                let Some((gin, value)) = msg_body.split_once(":") else {
-                    return Err(Error::new(ErrorKind::InvalidData, "error message"));
-                };
-                Self::SetInput {
-                    gin: gin.trim().parse::<u64>().unwrap(),
-                    value: value.to_string(),
-                }
+                let gin = msg_body.trim().parse::<u64>().unwrap();
+                let mut value = String::new();
+                reader.read_line(&mut value)?;
+                value.pop(); // Remove the trailing newline.
+                Self::SetInput { gin, value }
             }
             'B' => {
-                let Some((gin, num_bytes)) = msg_body.split_once(":") else {
-                    return Err(Error::new(ErrorKind::InvalidData, "error message"));
-                };
+                let gin = msg_body.trim().parse::<u64>().unwrap();
+                let mut num_bytes = String::new();
+                reader.read_line(&mut num_bytes)?;
                 let num_bytes = num_bytes.trim().parse::<usize>().unwrap();
-                let mut bytes = vec![0; num_bytes];
-                reader.read_exact(&mut bytes).unwrap();
-                Self::SetBinary {
-                    gin: gin.trim().parse::<u64>().unwrap(),
-                    bytes,
-                }
+                let value = read_bytes(reader, num_bytes)?;
+                Self::SetBinary { gin, value }
             }
-            'X' => Self::Advance {
-                dt: msg_body.parse::<f64>().unwrap(),
+            'A' => Self::Advance {
+                dt: msg_body.trim().parse::<f64>().unwrap(),
             },
             'O' => Self::GetOutput {
-                gin: msg_body.parse::<u64>().unwrap(),
+                gin: msg_body.trim().parse::<u64>().unwrap(),
             },
-            'S' => Self::Save { path: msg_body.into() },
-            'L' => Self::Load { path: msg_body.into() },
+            'S' => Self::Save,
+            'L' => {
+                let num_bytes = msg_body.trim().parse::<usize>().unwrap();
+                let save_state = read_bytes(reader, num_bytes)?;
+                Self::Load { save_state }
+            }
             _ => Self::Custom {
                 message_type: msg_type,
                 body: msg_body.to_string(),
@@ -301,17 +307,13 @@ impl Message {
     }
 }
 
-/// Wait for the next message from the environment, for implementing controllers.
-fn poll() -> Result<Message> {
-    Message::read(&mut std::io::stdin().lock())
-}
-
-/// Send an output value to the environment, for implementing controllers.
-fn output(gin: u64, value: String) -> Result<()> {
-    debug_assert!(!value.contains('\n'));
-    println!("{gin}:{value}");
-    std::io::stdout().flush()?;
-    Ok(())
+fn read_bytes(reader: &mut impl BufRead, len: usize) -> Result<Box<[u8]>> {
+    let mut data = Vec::with_capacity(len);
+    unsafe {
+        data.set_len(len);
+    }
+    reader.read_exact(&mut data)?;
+    Ok(data.into())
 }
 
 // Store these in global variables so that the main function is can be re-entered in case of error.
@@ -330,7 +332,8 @@ pub trait API {
     /// This method never returns!
     fn main(&mut self) -> Result<()> {
         loop {
-            let message = poll()?;
+            // Wait for the next message from the environment.
+            let message = Message::read(&mut std::io::stdin().lock())?;
             match message {
                 Message::Environment { environment } => {
                     ENVIRONMENT.lock().unwrap().replace(environment);
@@ -365,28 +368,33 @@ pub trait API {
                 Message::SetInput { gin, value } => {
                     self.set_input(gin, value);
                 }
-                Message::SetBinary { gin, bytes } => {
-                    self.set_binary(gin, bytes);
+                Message::SetBinary { gin, value } => {
+                    self.set_binary(gin, value);
                 }
                 Message::GetOutput { gin } => {
                     let value = self.get_output(gin);
-                    output(gin, value)?;
+                    debug_assert!(!value.contains('\n'));
+                    println!("O{gin}\n{value}");
+                    std::io::stdout().flush()?;
                 }
-                Message::Save { path } => {
-                    self.save(path);
+                Message::Save => {
+                    let save_state = self.save();
+                    println!("S{}", save_state.len());
+                    std::io::stdout().write_all(&save_state)?;
+                    std::io::stdout().flush()?;
                 }
-                Message::Load { path } => {
-                    self.load(path);
+                Message::Load { save_state } => {
+                    self.load(save_state);
                 }
                 Message::Custom { message_type, body } => {
                     self.custom(message_type, &body);
                 }
                 Message::Quit => {
-                    self.quit();
                     break;
                 }
             }
         }
+        self.quit();
         Ok(())
     }
 
@@ -396,7 +404,7 @@ pub trait API {
     /// the controller's computer process.
     ///
     /// Argument value is the parameters for the new control system.
-    fn genome(&mut self, environment: &Path, population: &str, value: String);
+    fn genome(&mut self, environment: &Path, population: &str, value: Box<[u8]>);
 
     /// Reset the currently loaded model to it's initial state.
     fn reset(&mut self);
@@ -410,7 +418,7 @@ pub trait API {
     /// Receive an array of bytes from the environment into the controller.
     ///
     /// Optional, panics by default.
-    fn set_binary(&mut self, gin: u64, bytes: Vec<u8>) {
+    fn set_binary(&mut self, gin: u64, value: Box<[u8]>) {
         panic!("unsupported operation: set_binary")
     }
 
@@ -420,14 +428,14 @@ pub trait API {
     /// Save the current state of the controller to file.
     ///
     /// Optional, panics by default.
-    fn save(&mut self, path: PathBuf) {
+    fn save(&mut self) -> Box<[u8]> {
         panic!("unsupported operation: save")
     }
 
     /// Load the state of a controller from file.
     ///
     /// Optional, panics by default.
-    fn load(&mut self, path: PathBuf) {
+    fn load(&mut self, save_state: Box<[u8]>) {
         panic!("unsupported operation: load")
     }
 
@@ -438,9 +446,9 @@ pub trait API {
         panic!("unsupported operation: custom")
     }
 
-    /// Optional.
-    ///
     /// This method is called just before the controller process exits.
+    ///
+    /// Optional.
     fn quit(&mut self) {}
 }
 
@@ -458,7 +466,7 @@ mod tests {
                 environment: PathBuf::from(""),
             },
             Message::Environment {
-                environment: PathBuf::from(" / \" _^ .?`~@!#$%^&*()_+-=[{]};:',<.>/? "),
+                environment: PathBuf::from("/ \" _^ .?`~@!#$%^&*()_+-=[{]};:',<.>/?"),
             },
             Message::Population {
                 population: "zebra".to_string(),
@@ -467,15 +475,20 @@ mod tests {
                 population: "".to_string(),
             },
             Message::Population {
-                population: " ".to_string(),
+                population: ". .".to_string(),
             },
             //
             Message::Genome {
-                value: "test123".to_string(),
+                value: Box::new([0, 1, 2]),
             },
-            Message::Genome { value: "".to_string() },
             Message::Genome {
-                value: "] } ){([\\n\" ".to_string(),
+                value: "test123".as_bytes().into(),
+            },
+            Message::Genome {
+                value: "".as_bytes().into(),
+            },
+            Message::Genome {
+                value: "] } ){([\\n\" ".as_bytes().into(),
             },
             //
             Message::Reset,
@@ -531,47 +544,29 @@ mod tests {
             //
             Message::SetBinary {
                 gin: 100,
-                bytes: b"123456789".to_vec(),
+                value: "123456789".as_bytes().into(),
             },
             Message::SetBinary {
                 gin: 100,
-                bytes: b"".to_vec(),
+                value: "".as_bytes().into(),
             },
             Message::SetBinary {
                 gin: 100,
-                bytes: b" ".to_vec(),
+                value: " ".as_bytes().into(),
             },
             Message::SetBinary {
                 gin: 100,
-                bytes: b":".to_vec(),
-            },
-            Message::SetBinary {
-                gin: 100,
-                bytes: b"\"".to_vec(),
-            },
-            Message::SetBinary {
-                gin: 100,
-                bytes: b"\\".to_vec(),
-            },
-            Message::SetBinary {
-                gin: 100,
-                bytes: b"\\n".to_vec(),
-            },
-            Message::SetBinary {
-                gin: 100,
-                bytes: b"1234".to_vec(),
+                value: "\"\\n\n\x00".as_bytes().into(),
             },
             //
             Message::GetOutput { gin: 0 },
             Message::GetOutput { gin: 100 },
             Message::GetOutput { gin: u64::MAX },
             //
-            Message::Save {
-                path: PathBuf::from("/tmp/my_save_file,"),
-            },
+            Message::Save,
             //
             Message::Load {
-                path: PathBuf::from("\\tmp\\my_save_file."),
+                save_state: "\\tmp\\my_save_file.".as_bytes().into(),
             },
             //
             Message::Custom {

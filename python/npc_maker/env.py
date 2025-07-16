@@ -355,10 +355,10 @@ class Environment:
         Return all outstanding individuals back to the evolutionary algorithm.
         This effectively abandons them in the environment.
         """
-        for individual in self.outstanding.values():
+        while self.outstanding:
+            name, individual = self.outstanding.popitem()
             population_name = individual.get_population()
             self.populations[population_name].death(individual)
-        self.outstanding.clear()
 
     def quit(self):
         """

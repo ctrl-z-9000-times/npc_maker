@@ -181,15 +181,14 @@ class Controller:
         # Receive the outputs.
         outputs = {}
         while len(outputs) < len(gin_list):
-            message = self._ctrl.stdout.readline().lstrip().decode("utf-8")
+            message = self._ctrl.stdout.readline().decode("utf-8").lstrip()
             if not message:
                 continue
-            msg_type = message[0].upper()
+            msg_type = message[0]
             msg_body = message[1:]
-            assert msg_type == 'O'
-            gin = int(msg_body)
-            value = self._ctrl.stdout.readline()
-            outputs[gin] = value.decode("utf-8")
+            assert msg_type.upper() == 'O'
+            gin = int(msg_body.strip())
+            outputs[gin] = self._ctrl.stdout.readline().decode("utf-8")
         assert set(outputs) == set(gin_list)
         if return_list:
             return outputs
