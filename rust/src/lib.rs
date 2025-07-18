@@ -4,3 +4,12 @@
 
 pub mod ctrl;
 pub mod env;
+
+fn read_bytes(reader: &mut impl std::io::BufRead, len: usize) -> std::io::Result<Box<[u8]>> {
+    let mut data = Vec::with_capacity(len);
+    unsafe {
+        data.set_len(len);
+    }
+    reader.read_exact(&mut data)?;
+    Ok(data.into())
+}

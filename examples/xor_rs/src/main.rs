@@ -1,6 +1,6 @@
 use npc_maker::ctrl::Controller;
 use npc_maker::env;
-use npc_maker::env::Request;
+use std::io::ErrorKind;
 
 fn xor_test(ctrl: &mut Controller, verbose: bool) -> f64 {
     let mut distance: f64 = 0.0;
@@ -38,43 +38,36 @@ fn xor_test(ctrl: &mut Controller, verbose: bool) -> f64 {
 }
 
 fn main() {
-    let (env_spec, mode, _settings) = npc_maker::env::get_args();
-
-    env::new(Some("xor"));
+    let (env_spec, mode, _settings) = env::get_args();
 
     let mut ctrl: Option<Controller> = None;
 
     loop {
-        let Some(request) = npc_maker::env::poll().unwrap() else {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            continue;
-        };
+        env::spawn(Some("xor"));
 
-        match request {
-            Request::Quit => break,
-
-            npc_maker::env::Request::Custom(_) => {}
-
-            Request::Birth {
-                name,
-                controller,
-                genome,
-                ..
-            } => {
-                if let Some(ctrl) = &ctrl {
-                    assert_eq!(ctrl.get_command(), controller);
-                } else {
-                    ctrl = Some(Controller::new(&env_spec.spec, "xor", controller).unwrap());
-                }
-                let ctrl = ctrl.as_mut().unwrap();
-
-                let genome = serde_json::to_string(&genome).unwrap();
-                ctrl.genome(&genome).unwrap();
-                let score = xor_test(ctrl, mode == env::Mode::Graphical);
-                env::score(Some(&name), &score.to_string());
-                env::death(Some(&name));
-                env::new(Some("xor"));
+        let result = env::input();
+        if let Err(error) = &result {
+            if error.kind() == ErrorKind::UnexpectedEof {
+                break;
             }
         }
+        let (indiv, genome) = result.unwrap();
+
+        if let Some(ctrl) = &ctrl {
+            assert_eq!(ctrl.get_command(), indiv.controller);
+        } else {
+            ctrl = Some(Controller::new(&env_spec.spec, "xor", indiv.controller).unwrap());
+        }
+        let ctrl = ctrl.as_mut().unwrap();
+
+        ctrl.genome(&genome).unwrap();
+
+        let score = xor_test(ctrl, mode == env::Mode::Graphical);
+
+        env::score(Some(&indiv.name), &score.to_string());
+
+        env::death(Some(&indiv.name));
+
+        env::spawn(Some("xor"));
     }
 }

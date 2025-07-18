@@ -5,7 +5,7 @@ components and applications with the NPC Maker framework.
 
 ### Status
 
-The rust API is incomplete. Currently it allows for the following:
+The rust API is currently supports the following:
 
 ✅ Implement new controllers
 

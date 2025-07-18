@@ -16,17 +16,17 @@ import sys
 import time
 
 __all__ = (
-    "death",
+    "Specification",
     "Environment",
     "eprint",
     "get_args",
-    "telemetry",
+    "input",
+    "spawn",
     "mate",
-    "new",
-    "poll",
     "score",
+    "telemetry",
+    "death",
     "SoloAPI",
-    "Specification",
 )
 
 def _timestamp():
@@ -242,6 +242,140 @@ def _help_message(env_spec):
             message += line + "\n"
     return message
 
+def eprint(*args, **kwargs):
+    """
+    Print to stderr
+
+    The NPC Maker uses the environment program's stdin & stdout to communicate
+    with the main program via a standardized JSON-based protocol. Unformatted
+    diagnostic and error messages should be written to stderr using this function.
+    """
+    print(*args, **kwargs, file=sys.stderr, flush=True)
+
+def get_args():
+    """
+    Read the command line arguments for an NPC Maker environment program.
+
+    Returns a tuple of (environment-specification, graphics-mode, settings-dict)
+    """
+    def error(message):
+        eprint(message)
+        sys.exit(1)
+    # Read the command line arguments.
+    if len(sys.argv) < 2:
+        error("missing argument: environment specification")
+    program = sys.argv[0]
+    # Read the environment specification file.
+    try:
+        env_spec = Specification(sys.argv[1])
+    except Exception as err:
+        error(err)
+    # Print help message and exit.
+    if '-h' in sys.argv or '--help' in sys.argv:
+        error(_help_message(env_spec))
+    # Read the graphics mode.
+    if len(sys.argv) >= 3:
+        mode  = sys.argv[2].strip().lower()
+    else:
+        mode  = 'graphical' # Default setting.
+    # Check the graphics mode.
+    if mode not in ['graphical', 'headless']:
+        error(f"argument error: expected either \"graphical\" or \"headless\", got \"{mode}\"")
+    # Read the user's settings.
+    settings = sys.argv[3:]
+    if len(settings) % 2 == 1:
+        error("argument error: odd number of settings, expected key-value pairs")
+    settings = zip(settings[::2], settings[1::2])
+    # Overwrite the default values with the user's settings.
+    defaults = {item['name']: item['default'] for item in env_spec.get('settings', [])}
+    for item, value in settings:
+        if item not in defaults:
+            error(f"argument error: unexpected parameter \"{item}\"")
+        defaults[item] = value
+    _cast_env_settings(env_spec, defaults)
+    return (env_spec, mode, defaults)
+
+def input():
+    """
+    Read the next individual from the evolution program, blocking.
+
+    New individual must be requested before calling this with the spawn() and
+    mate() functions.
+    """
+    # Ignore empty lines.
+    while True:
+        message = sys.stdin.readline()
+        if not message:
+            raise EOFError
+        message = message.strip()
+        if message:
+            break
+    message = json.loads(message)
+    num_bytes = int(message["genome"])
+    message["genome"] = sys.stdin.read(num_bytes)
+    return message
+
+def _try_print(*args, **kwargs):
+    # If the stdout channel is simply closed, then quietly exit.
+    # For other more abnormal conditions raise the error to the user.
+    try:
+        print(*args, **kwargs, file=sys.stdout, flush=True)
+    except BrokenPipeError:
+        sys.stdin.close()
+    except ValueError:
+        if sys.stdout.closed:
+            sys.stdin.close()
+        else:
+            raise
+
+def spawn(population=None):
+    """
+    Request a new individual from this population's evolution API.
+
+    Argument population is optional if the environment has exactly one population.
+    """
+    if population is not None:
+        population = str(population)
+    _try_print(json.dumps({"Spawn": population}))
+
+def mate(*parents):
+    """
+    Request to mate specific individuals together to produce a child individual.
+    """
+    parents = [str(p) for p in parents]
+    assert len(parents) > 0
+    _try_print(json.dumps({"Mate": parents}))
+
+def score(name, score):
+    """
+    Report an individual's score or reproductive fitness to the evolution API.
+
+    This should be called *before* calling "death()" on the individual.
+    """
+    name = str(name)
+    score = str(score)
+    _try_print(json.dumps({"Score": score, "name": name}))
+
+def telemetry(name, info):
+    """
+    Report extra information about an individual.
+
+    Argument info is a mapping of string key-value pairs.
+    """
+    name = str(name)
+    info = {str(key) : str(value) for key, value in info.items()}
+    _try_print(json.dumps({"Telemetry": info, "name": name}))
+
+def death(name):
+    """
+    Notify the evolution API that the given individual has died.
+
+    The individual's score or reproductive fitness should be reported
+    using the "score()" function *before* calling this method.
+    """
+    name = str(name)
+    _try_print(json.dumps({"Death": name}))
+
 class Environment:
     """
     This class encapsulates an instance of an environment and provides methods
@@ -384,11 +518,11 @@ class Environment:
         ctrl[0] = str(ctrl[0]) # Convert Path to String
         assert isinstance(genome, bytes)
         # Process the request.
-        self.outstanding[name] = individual
         self._process.stdin.write('{{"name":"{}","population":"{}","parents":{},"controller":{},"genome":{}}}\n'
             .format(name, pop, json.dumps(parents), json.dumps(ctrl), len(genome))
             .encode("utf-8"))
         self._process.stdin.write(genome)
+        self.outstanding[name] = individual
         individual.birth_date = _timestamp()
 
     def poll(self):
@@ -418,8 +552,8 @@ class Environment:
             # Decode the message.
             message = json.loads(message)
 
-            if "New" in message:
-                population = message["New"]
+            if "Spawn" in message:
+                population = message["Spawn"]
                 if population is None:
                     all_populations = self.env_spec["populations"]
                     if len(all_populations) == 1:
@@ -504,167 +638,6 @@ class Environment:
         return {population_name: population.ascended
                 for population_name, population in dispatchers.items()}
 
-def eprint(*args, **kwargs):
-    """
-    Print to stderr
-
-    The NPC Maker uses the environment program's stdin & stdout to communicate
-    with the main program via a standardized JSON-based protocol. Unformatted
-    diagnostic and error messages should be written to stderr using this function.
-    """
-    print(*args, **kwargs, file=sys.stderr, flush=True)
-
-def get_args():
-    """
-    Read the command line arguments for an NPC Maker environment program.
-
-    Returns a tuple of (environment-specification, graphics-mode, settings-dict)
-    Environment programs *must* call this function for initialization purposes.
-    """
-    os.set_blocking(sys.stdin.fileno(), False)
-    # 
-    def error(message):
-        eprint(message)
-        sys.exit(1)
-    # Read the command line arguments.
-    if len(sys.argv) < 2:
-        error("missing argument: environment specification")
-    program = sys.argv[0]
-    # Read the environment specification file.
-    try:
-        env_spec = Specification(sys.argv[1])
-    except Exception as err:
-        error(err)
-    # Print help message and exit.
-    if '-h' in sys.argv or '--help' in sys.argv:
-        error(_help_message(env_spec))
-    # Read the graphics mode.
-    if len(sys.argv) >= 3:
-        mode  = sys.argv[2].strip().lower()
-    else:
-        mode  = 'graphical' # Default setting.
-    # Check the graphics mode.
-    if mode not in ['graphical', 'headless']:
-        error(f"argument error: expected either \"graphical\" or \"headless\", got \"{mode}\"")
-    # Read the user's settings.
-    settings = sys.argv[3:]
-    if len(settings) % 2 == 1:
-        error("argument error: odd number of settings, expected key-value pairs")
-    settings = zip(settings[::2], settings[1::2])
-    # Overwrite the default values with the user's settings.
-    defaults = {item['name']: item['default'] for item in env_spec.get('settings', [])}
-    for item, value in settings:
-        if item not in defaults:
-            error(f"argument error: unexpected parameter \"{item}\"")
-        defaults[item] = value
-    _cast_env_settings(env_spec, defaults)
-    return (env_spec, mode, defaults)
-
-def poll():
-    """
-    Check for messages from the evolution program.
-
-    Callers *must* call the `get_args()` function before using this,
-    for initialization purposes.
-
-    This function is non-blocking and will return None if there are no new messages. 
-    If the standard input channel is closed then this returns the string "Quit".
-    Otherwise this decodes JSON messages into python objects and returns them.
-    """
-    try:
-        message = sys.stdin.readline()
-    # If any communication channels with the main program are dead then exit immediately.
-    except ValueError:
-        if sys.stdin.closed:
-            return "Quit"
-        else:
-            raise
-    except EOFError:
-        return "Quit"
-    # Ignore empty lines.
-    message = message.strip()
-    if not message:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        if sys.stdin.closed:
-            return "Quit"
-        return None
-    # Decode the JSON string into a python object.
-    try:
-        message = json.loads(message)
-    except json.decoder.JSONDecodeError as err:
-        eprint(f"JSON syntax error in \"{message}\" {err}")
-        return None
-    # 
-    num_bytes = int(message["genome"])
-    genome = sys.stdin.read(num_bytes)
-    message["genome"] = genome
-    # 
-    return message
-
-def _try_print(*args, **kwargs):
-    # If the stdout channel is simply closed, then quietly exit.
-    # For other more abnormal conditions raise the error to the user.
-    # 
-    # Closing stdin will cause all future calls to poll() to return the "Quit" message.
-    try:
-        print(*args, **kwargs, file=sys.stdout, flush=True)
-    except BrokenPipeError:
-        sys.stdin.close()
-    except ValueError:
-        if sys.stdout.closed:
-            sys.stdin.close()
-        else:
-            raise
-
-def new(population=None):
-    """
-    Request a new individual from this population's evolution API.
-
-    Argument population is optional if the environment has exactly one population.
-    """
-    if population is not None:
-        population = str(population)
-    _try_print(json.dumps({"New": population}))
-
-def mate(*parents):
-    """
-    Request to mate specific individuals together to produce a child individual.
-    """
-    parents = [str(p) for p in parents]
-    assert len(parents) > 0
-    _try_print(json.dumps({"Mate": parents}))
-
-def score(name, score):
-    """
-    Report an individual's score or reproductive fitness to the evolution API.
-
-    This should be called *before* calling "death()" on the individual.
-    """
-    name = str(name)
-    score = str(score)
-    _try_print(json.dumps({"Score": score, "name": name}))
-
-def telemetry(name, info):
-    """
-    Report extra information about an individual.
-
-    Argument info is a mapping of string key-value pairs.
-    """
-    name = str(name)
-    info = {str(key) : str(value) for key, value in info.items()}
-    _try_print(json.dumps({"Telemetry": info, "name": name}))
-
-def death(name):
-    """
-    Notify the evolution API that the given individual has died.
-
-    The individual's score or reproductive fitness should be reported
-    using the "score()" function *before* calling this method.
-    """
-    name = str(name)
-    _try_print(json.dumps({"Death": name}))
-
 class SoloAPI:
     """
     Abstract class for implementing environments which contain exactly one
@@ -689,33 +662,20 @@ class SoloAPI:
         line arguments as key-value pairs.
         """
 
-    def advance(self, name, controller):
+    def evaluate(self, name, controller):
         """
         Abstract Method
 
-        Advance the state of the environment by one discrete time step.
+        Evaluate the given controller in this environment.
 
         Argument name is the UUID string of the individual who is currently
                  occupying the environment.
 
         Argument controller is an instance of "npc_maker.ctrl.Controller"
 
-        Returns the individual's score or None. If a score is returned then the
-        individual is dead and a new individual will be created for the next
-        call to the advance() method. If None is returned then the environment
-        is still evaluating the current individual and the same individual
-        (name and controller) will be passed to the next call to advance().
+        Returns the individual's score.
         """
         raise TypeError("abstract method called")
-
-    def idle(self):
-        """
-        Abstract Method, Optional
-
-        This is called periodically while the environment is Paused or Stopped.
-        Environments should refrain from computationally intensive workloads while idling.
-        """
-        pass
 
     def quit(self):
         """
@@ -726,11 +686,9 @@ class SoloAPI:
         pass
 
     @classmethod
-    def main(cls, buffer=1):
+    def main(cls):
         """
         Run the environment program.
-
-        Argument buffer is the number of individuals to request at once.
 
         This function handles communications between the environment
         (this program) and the evolution program, which execute in separate
@@ -743,58 +701,29 @@ class SoloAPI:
         >>> if __name__ == "__main__":
         >>>     MyEnvironment.main()
         """
-        assert buffer >= 1
         env_spec, mode, settings = get_args()
         assert len(env_spec["populations"]) == 1
         self = cls(env_spec, mode, **settings)
         population = env_spec["populations"][0]["name"]
-        controller = None
         cache = {} # command -> controller
-        queue = collections.deque()
-
-        def is_running():
-            return queue or (controller is not None)
-
-        for _ in range(buffer):
-            new(population)
-
-        # Main Program Loop.
+        # 
         while True:
-
-            # Message Read Loop.
-            while request := poll():
-                if request == "Quit":
-                    break
-
-                queue.append(request)
-
-            if not is_running():
-                self.idle()
-                idle_fps = 30
-                time.sleep(1 / idle_fps) # Don't excessively busy loop.
-
-            else:
-                # Birth New Controller.
-                if controller is None and queue:
-                    request    = queue.popleft()
-                    name       = request["name"]
-                    command    = request["controller"]
-                    # Reuse controller instances if able.
-                    if controller is None:
-                        controller = cache.get(tuple(command))
-                    # Start a new controller process.
-                    if controller is None:
-                        controller = npc_maker.ctrl.Controller(env_spec, population, command)
-                        cache[tuple(command)] = controller
-                    assert controller.is_alive()
-                    controller.genome(request["genome"])
-
-                # Advance Controller One Step.
-                if controller is not None:
-                    final_score = self.advance(name, controller)
-                    if final_score is not None:
-                        score(name, final_score)
-                        death(name)
-                        controller = None
-                        new(population)
+            spawn(population)
+            try:
+                individual = input()
+            except EOFError:
+                break
+            name       = individual["name"]
+            command    = individual["controller"]
+            # Reuse controller instances if able.
+            controller = cache.get(tuple(command))
+            # Start a new controller process.
+            if controller is None:
+                controller = npc_maker.ctrl.Controller(env_spec, population, command)
+                cache[tuple(command)] = controller
+            assert controller.is_alive()
+            controller.genome(individual["genome"])
+            final_score = self.evaluate(name, controller)
+            score(name, final_score)
+            death(name)
         self.quit()

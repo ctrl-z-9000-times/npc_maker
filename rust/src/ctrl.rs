@@ -153,9 +153,12 @@ impl Controller {
             message.clear();
             self.stdout.read_line(&mut message)?;
             message.pop(); // Discard the trailing newline.
-            let (gin, value) = message.split_once(":").unwrap();
-            let gin = gin.parse().unwrap();
-            outputs.insert(gin, value.to_string());
+            debug_assert!(&message[..1] == "O");
+            let gin = message[1..].parse().unwrap();
+            message.clear();
+            self.stdout.read_line(&mut message)?;
+            message.pop(); // Discard the trailing newline.
+            outputs.insert(gin, std::mem::take(&mut message));
         }
         Ok(outputs)
     }
@@ -167,7 +170,7 @@ impl Controller {
 
         todo!(); // Block until response
 
-        Ok(())
+        // Ok(())
     }
 
     ///  Load the state of the control system from file.
@@ -267,7 +270,7 @@ impl Message {
             },
             'G' => {
                 let num_bytes = msg_body.trim().parse::<usize>().unwrap();
-                let value = read_bytes(reader, num_bytes)?;
+                let value = crate::read_bytes(reader, num_bytes)?;
                 Self::Genome { value }
             }
             'R' => Self::Reset,
@@ -283,7 +286,7 @@ impl Message {
                 let mut num_bytes = String::new();
                 reader.read_line(&mut num_bytes)?;
                 let num_bytes = num_bytes.trim().parse::<usize>().unwrap();
-                let value = read_bytes(reader, num_bytes)?;
+                let value = crate::read_bytes(reader, num_bytes)?;
                 Self::SetBinary { gin, value }
             }
             'A' => Self::Advance {
@@ -295,7 +298,7 @@ impl Message {
             'S' => Self::Save,
             'L' => {
                 let num_bytes = msg_body.trim().parse::<usize>().unwrap();
-                let save_state = read_bytes(reader, num_bytes)?;
+                let save_state = crate::read_bytes(reader, num_bytes)?;
                 Self::Load { save_state }
             }
             _ => Self::Custom {
@@ -305,15 +308,6 @@ impl Message {
         };
         Ok(msg_data)
     }
-}
-
-fn read_bytes(reader: &mut impl BufRead, len: usize) -> Result<Box<[u8]>> {
-    let mut data = Vec::with_capacity(len);
-    unsafe {
-        data.set_len(len);
-    }
-    reader.read_exact(&mut data)?;
-    Ok(data.into())
 }
 
 // Store these in global variables so that the main function is can be re-entered in case of error.

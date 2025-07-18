@@ -77,10 +77,6 @@ class CartpoleEnvironment(npc_maker.env.SoloAPI):
         self.survived     = [] # How many timesteps it survive in each trial.
         self.oscillations = collections.deque()
 
-    def idle(self):
-        if self.viewer and self.viewer.is_running():
-            self.viewer.sync()
-
     def advance(self, name, controller):
         """ Run the environment forward one step. """
         if name != self.name:

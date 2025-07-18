@@ -66,14 +66,13 @@ interface objects. Again, extra attributes are simply ignored.
 | Attribute | JSON Type | Default Value | Description |
 | :-------- | :-------: | :------------ | :---------- |
 | `"gin"` | Number | Required | Global Innovation Number, must be unique within the interfaces array |
-| `"name"` | String | Required | User facing name for this port, must be unique within this interfaces array |
+| `"name"` | String | Required | User facing name for this port, must be unique within the interfaces array |
 | `"description"` | String | `""` | User facing documentation message |
 | Unspecified | Any |  | Environments may include extra information about this interface |
 
 The environment specification's "**settings**" attribute describes the command
 line arguments of the environment program. The user must finalize their
-settings before starting the environment program. The settings are presented to
-the user in the help menu for each environment. The following table shows all
+settings before starting the environment program. The following table shows all
 of the expected attributes of settings objects, and extra attributes are *not*
 allowed.
 
@@ -130,9 +129,9 @@ specification.
 
 ## Environment Protocol ##
 
-The evolution program communicates with the environment over the it's `stdin`,
-`stdout` and `stderr` channels. In the event of unrecognized or invalid
-messages, all parties should attempt to recover and resume normal operation.
+The evolution program communicates with the environment over the environment's
+`stdin`, `stdout` and `stderr` channels. When `stdin` closes the environment
+should exit.
 
 
 ### Standard Input Channel ###
@@ -141,10 +140,9 @@ The evolution program sends new individuals to the environment. The environment
 must request new individuals; new individuals will not be sent unsolicited.
 
 Individuals are transmitted in two parts. First metadata is encoded in UTF-8
-JSON and written as a single line. Then the genome is written as a binary
-blob, whose length is stored in the metadata.
-
-The metadata contains the following information about the new individual:
+JSON and written as a single line. Then the genome is written as a binary blob,
+whose length is stored in the metadata. The metadata contains the following
+information about the new individual:
 
 | Attribute | JSON Type | Description |
 | :-------- | :-------: | :---------- |
@@ -163,7 +161,7 @@ Words in ALLCAPS are placeholders for runtime data.
 
 | Message Type | Message Format | Description |
 | :----------- | :------------- | :---------- |
-| New   | `{"New":"POPULATION"}\n` | Request a new individual from the evolutionary algorithm |
+| Spawn | `{"Spawn":"POPULATION"}\n` | Request a new individual from the evolutionary algorithm |
 | Mate  | `{"Mate":["UUID","UUID"]}\n` | Request a new individual by mating individuals together. This requires at least one parent. This accepts more than two parents. All parents must be alive, in this environment, and members of the same population |
 | Score | `{"Score":"VALUE","name":"UUID"}\n` | Report the score or reproductive fitness of a living individual |
 | Telemetry | `{"Telemetry":{"KEY":"VALUE"},"name":"UUID"}\n` | The environment associates some extra information with a living individual. The info is kept alongside the individual in perpetuity |

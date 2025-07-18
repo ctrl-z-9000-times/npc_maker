@@ -59,8 +59,3 @@ By default controllers inherit their `stderr` channel from their environment.
 In the event that any of the three standard I/O channels closes or emits an error,
 then all parties should assume that the controller program is dead and act accordingly.
 
-
-## Schematic Diagram of the Controller Interface ##
-
-![Schematic Diagram](images/controller_interface.svg)
-
