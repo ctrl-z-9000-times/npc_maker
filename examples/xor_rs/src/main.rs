@@ -67,7 +67,5 @@ fn main() {
         env::score(Some(&indiv.name), &score.to_string());
 
         env::death(Some(&indiv.name));
-
-        env::spawn(Some("xor"));
     }
 }

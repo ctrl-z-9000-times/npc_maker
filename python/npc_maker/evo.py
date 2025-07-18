@@ -503,152 +503,7 @@ class Replayer(Evolution):
             score = individual.get_custom_score(self._score)
             self._scores.append(score)
 
-class _Recorder:
-    def __init__(self, path, leaderboard, hall_of_fame):
-        # Clean and save the arguments.
-        if path is None:
-            self._tempdir   = tempfile.TemporaryDirectory()
-            path            = self._tempdir.name
-        self._path          = Path(path)
-        self._leaderboard    = int(leaderboard) if leaderboard is not None else 0
-        self._hall_of_fame   = int(hall_of_fame) if hall_of_fame is not None else 0
-        assert self._path.is_dir()
-        assert self._leaderboard >= 0
-        assert self._hall_of_fame >= 0
-        # 
-        if self._leaderboard: self._load_leaderboard()
-        if self._hall_of_fame: self._load_hall_of_fame()
-
-    def get_path(self):
-        """
-        Returns the path argument or a temporary directory.
-        """
-        return self._path
-
-    def get_leaderboard_path(self):
-        """
-        Returns a path or None if the leaderboard is disabled.
-        """
-        if self._leaderboard:
-            return self._path.joinpath("leaderboard")
-        else:
-            return None
-
-    def get_hall_of_fame_path(self):
-        """
-        Returns a path or None if the hall of fame is disabled.
-        """
-        if self._hall_of_fame:
-            return self._path.joinpath("hall_of_fame")
-        else:
-            return None
-
-    def _record_death(self, individual, score):
-        if self._leaderboard:  self._update_leaderboard(individual, score)
-        if self._hall_of_fame: self._update_hall_of_fame(individual, score)
-
-    def _load_leaderboard(self):
-        self._leaderboard_data = []
-        # 
-        leaderboard_path = self.get_leaderboard_path()
-        if not leaderboard_path.exists():
-            leaderboard_path.mkdir()
-        # 
-        for path in leaderboard_path.iterdir():
-            if path.suffix.lower() == ".json":
-                individual  = Individual.load(path)
-                score       = individual.get_custom_score(self.score_function)
-                ascension   = individual.get_ascension()
-                entry       = (score, -ascension, path)
-                self._leaderboard_data.append(entry)
-        self._settle_leaderboard()
-
-    def _update_leaderboard(self, individual, score):
-        # Check if this individual made it onto the leaderboard.
-        leaderboard_is_full = len(self._leaderboard_data) >= self._leaderboard
-        if leaderboard_is_full and score <= self._leaderboard_data[-1][0]:
-            return
-        # 
-        path = self.get_leaderboard_path()
-        individual.save(path)
-        ascension   = individual.get_ascension()
-        entry       = (score, -ascension, individual.get_path())
-        self._leaderboard_data.append(entry)
-        # 
-        self._settle_leaderboard()
-
-    def _settle_leaderboard(self):
-        """ Sort and prune the leaderboard. """
-        self._leaderboard_data.sort(reverse=True)
-        while len(self._leaderboard_data) > self._leaderboard:
-            (score, neg_ascension, path) = self._leaderboard_data.pop()
-            path.unlink()
-
-    def get_leaderboard(self):
-        """
-        The leaderboard is a list of pairs of (path, score).
-        It is sorted descending so leaderboard[0] is the best individual.
-        """
-        return [(path, score) for (score, neg_ascension, path) in self._leaderboard_data]
-
-    def get_best(self):
-        """
-        Returns the best individual ever.
-
-        Only available if the leaderboard is enabled.
-        Returns None if the leaderboard is empty.
-        """
-        if not self._leaderboard:
-            raise ValueError("leaderboard is disabled")
-        if not self._leaderboard_data:
-            return None
-        (score, neg_ascension, path) = max(self._leaderboard_data)
-        return Individual.load(self.genome_cls, path)
-
-    def _load_hall_of_fame(self):
-        self._hall_of_fame_data         = []
-        self._hall_of_fame_candidates   = []
-        # Get the path and make sure that it exists.
-        hall_of_fame_path = self.get_hall_of_fame_path()
-        if not hall_of_fame_path.exists():
-            hall_of_fame_path.mkdir()
-        # Load individuals from file.
-        for path in hall_of_fame_path.iterdir():
-            if path.suffix.lower() == ".json":
-                individual = Individual.load(path)
-                self._hall_of_fame_data.append(individual)
-        # Sort the data chronologically.
-        self._hall_of_fame_data.sort(key=lambda x: x.get_ascension())
-        # Replace the individuals with their file-paths.
-        self._hall_of_fame_data = [x.get_path() for x in self._hall_of_fame_data]
-
-    def _update_hall_of_fame(self, individual, score):
-        ascension   = individual.get_ascension()
-        entry       = (score, -ascension, individual)
-        self._hall_of_fame_candidates.push(entry)
-
-    def _settle_hall_of_fame(self):
-        path = self.get_hall_of_fame_path()
-        # 
-        self._hall_of_fame_candidates.sort()
-        winners = self._hall_of_fame_candidates[-self._hall_of_fame:]
-        winners = [individual for (score, neg_ascension, individual) in winners]
-        winners.sort(key=lambda individual: individual.get_ascension())
-        for individual in winners:
-            individual.save(path)
-            self._hall_of_fame_data.append(individual.get_path())
-        # 
-        self._hall_of_fame_candidates.clear()
-
-    def get_hall_of_fame(self):
-        """
-        The hall of fame is a list of paths of the best scoring individuals from
-        each generation. It is sorted in chronological order so hall_of_fame[0]
-        is the oldest individual.
-        """
-        return list(self._hall_of_fame_data)
-
-class Neat(Evolution, _Recorder):
+class Neat(Evolution):
     """
     """
     def __init__(self, seed,
@@ -698,7 +553,19 @@ class Neat(Evolution, _Recorder):
         self.score_function         = score_function
         assert self.population_size     > 0
         assert self.speciation_distance > 0
-        _Recorder.__init__(self, path, leaderboard, hall_of_fame)
+        # Setup data recording.
+        if path is None:
+            self._tempdir   = tempfile.TemporaryDirectory() # Keep alive for the lifetime of this object.
+            path            = self._tempdir.name
+        self._path          = Path(path)
+        self._leaderboard   = int(leaderboard) if leaderboard is not None else 0
+        self._hall_of_fame  = int(hall_of_fame) if hall_of_fame is not None else 0
+        assert self._path.is_dir()
+        assert self._leaderboard >= 0
+        assert self._hall_of_fame >= 0
+        # 
+        if self._leaderboard: self._load_leaderboard()
+        if self._hall_of_fame: self._load_hall_of_fame()
         # Initialize our internal data structures.
         self._ascension     = 0 # Number of individuals who have died.
         self._generation    = 0 # Generation counter.
@@ -712,6 +579,59 @@ class Neat(Evolution, _Recorder):
             seed.score = 0.0
         self._species.append((seed.score, [seed]))
 
+    def _load_leaderboard(self):
+        self._leaderboard_data = []
+        # 
+        leaderboard_path = self.get_leaderboard_path()
+        if not leaderboard_path.exists():
+            leaderboard_path.mkdir()
+        # 
+        for path in leaderboard_path.iterdir():
+            if path.suffix.lower() == ".json":
+                individual  = Individual.load(path)
+                score       = individual.get_custom_score(self.score_function)
+                ascension   = individual.get_ascension()
+                entry       = (score, -ascension, path)
+                self._leaderboard_data.append(entry)
+        self._settle_leaderboard()
+
+    def _load_hall_of_fame(self):
+        self._hall_of_fame_data         = []
+        self._hall_of_fame_candidates   = []
+        # Get the path and make sure that it exists.
+        hall_of_fame_path = self.get_hall_of_fame_path()
+        if not hall_of_fame_path.exists():
+            hall_of_fame_path.mkdir()
+        # Load individuals from file.
+        for path in hall_of_fame_path.iterdir():
+            if path.suffix.lower() == ".json":
+                individual = Individual.load(path)
+                self._hall_of_fame_data.append(individual)
+        # Sort the data chronologically.
+        self._hall_of_fame_data.sort(key=lambda x: x.get_ascension())
+        # Replace the individuals with their file-paths.
+        self._hall_of_fame_data = [x.get_path() for x in self._hall_of_fame_data]
+
+    def _settle_leaderboard(self):
+        """ Sort and prune the leaderboard. """
+        self._leaderboard_data.sort(reverse=True)
+        while len(self._leaderboard_data) > self._leaderboard:
+            (score, neg_ascension, path) = self._leaderboard_data.pop()
+            path.unlink()
+
+    def _settle_hall_of_fame(self):
+        path = self.get_hall_of_fame_path()
+        # 
+        self._hall_of_fame_candidates.sort()
+        winners = self._hall_of_fame_candidates[-self._hall_of_fame:]
+        winners = [individual for (score, neg_ascension, individual) in winners]
+        winners.sort(key=lambda individual: individual.get_ascension())
+        for individual in winners:
+            individual.save(path)
+            self._hall_of_fame_data.append(individual.get_path())
+        # 
+        self._hall_of_fame_candidates.clear()
+
     def get_ascension(self) -> int:
         """
         Returns the total number of individuals who have died.
@@ -723,6 +643,59 @@ class Neat(Evolution, _Recorder):
         Returns the number of generations that have completely passed.
         """
         return self._generation
+
+    def get_path(self):
+        """
+        Returns the path argument or a temporary directory.
+        """
+        return self._path
+
+    def get_leaderboard_path(self):
+        """
+        Returns a path or None if the leaderboard is disabled.
+        """
+        if self._leaderboard:
+            return self._path.joinpath("leaderboard")
+        else:
+            return None
+
+    def get_hall_of_fame_path(self):
+        """
+        Returns a path or None if the hall of fame is disabled.
+        """
+        if self._hall_of_fame:
+            return self._path.joinpath("hall_of_fame")
+        else:
+            return None
+
+    def get_leaderboard(self):
+        """
+        The leaderboard is a list of pairs of (path, score).
+        It is sorted descending so leaderboard[0] is the best individual.
+        """
+        return [(path, score) for (score, neg_ascension, path) in self._leaderboard_data]
+
+    def get_hall_of_fame(self):
+        """
+        The hall of fame is a list of paths of the best scoring individuals from
+        each generation. It is sorted in chronological order so hall_of_fame[0]
+        is the oldest individual.
+        """
+        return list(self._hall_of_fame_data)
+
+    def get_best(self):
+        """
+        Returns the best individual ever.
+
+        Only available if the leaderboard is enabled.
+        Returns None if the leaderboard is empty.
+        """
+        if not self._leaderboard:
+            raise ValueError("leaderboard is disabled")
+        if not self._leaderboard_data:
+            return None
+        (score, neg_ascension, path) = max(self._leaderboard_data)
+        return Individual.load(self.genome_cls, path)
 
     def _score(self, individual):
         return individual.get_custom_score(self.score_function)
@@ -839,4 +812,24 @@ class Neat(Evolution, _Recorder):
             return
         # 
         self._waiting.append(individual)
-        self._record_death(individual, score)
+        if self._leaderboard:  self._update_leaderboard(individual, score)
+        if self._hall_of_fame: self._update_hall_of_fame(individual, score)
+
+    def _update_leaderboard(self, individual, score):
+        # Check if this individual made it onto the leaderboard.
+        leaderboard_is_full = len(self._leaderboard_data) >= self._leaderboard
+        if leaderboard_is_full and score <= self._leaderboard_data[-1][0]:
+            return
+        # 
+        path = self.get_leaderboard_path()
+        individual.save(path)
+        ascension   = individual.get_ascension()
+        entry       = (score, -ascension, individual.get_path())
+        self._leaderboard_data.append(entry)
+        # 
+        self._settle_leaderboard()
+
+    def _update_hall_of_fame(self, individual, score):
+        ascension   = individual.get_ascension()
+        entry       = (score, -ascension, individual)
+        self._hall_of_fame_candidates.push(entry)

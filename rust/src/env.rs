@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -333,12 +333,15 @@ pub fn get_args() -> (EnvironmentSpec, Mode, HashMap<String, String>) {
 /// New individual must be requested before calling this with the [spawn()] and
 /// [mate()] functions.
 pub fn input() -> Result<(Individual, Box<[u8]>), io::Error> {
+    io::stdout().flush().unwrap();
+
     let mut line = String::new();
-    io::stdin().lock().read_line(&mut line)?;
+    let stdin = &mut io::stdin().lock();
+    stdin.read_line(&mut line)?;
 
     let metadata: Individual = serde_json::from_str(&line)?;
 
-    let binary = crate::read_bytes(&mut io::stdin().lock(), metadata.genome)?;
+    let binary = crate::read_bytes(stdin, metadata.genome)?;
 
     Ok((metadata, binary))
 }
