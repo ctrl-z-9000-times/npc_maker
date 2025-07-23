@@ -2,11 +2,14 @@
 Evolutionary algorithms and supporting tools.
 """
 
-from os.path import getmtime
 from pathlib import Path
 import copy
+import io
 import json
 import math
+import os
+import os.path
+import pickle
 import random
 import shlex
 import tempfile
@@ -25,10 +28,9 @@ class Genome:
     """
     Abstract class for implementing genetic algorithms.
     """
-    def parameters(self) -> str:
+    def parameters(self) -> bytes:
         """
-        Serialize the genome to send it to the control system.
-        The message must be a single-line.
+        Package the genome for sending it to the control system.
         """
         raise TypeError("abstract method called")
 
@@ -51,24 +53,24 @@ class Genome:
         """
         raise TypeError("abstract method called")
 
-    def save(self) -> object:
+    def save(self) -> bytes:
         """
-        Package the genome into a JSON compatible object.
+        Serialize the genome into a binary object for long-term storage.
         """
-        raise TypeError("abstract method called")
+        return pickle.dumps(self)
 
     @classmethod
     def load(cls, save_data) -> 'Genome':
         """
         Recreate a genome from a saved object.
         """
-        raise TypeError("abstract method called")
+        return pickle.loads(save_data)
 
 class Epigenome(Genome):
     """
     Abstract class for implementing genetic algorithms with epigenetic modifications.
     """
-    def parameters(self, epigenome) -> str:
+    def parameters(self, epigenome) -> bytes:
         raise TypeError("abstract method called")
 
     def mate(self, epigenome, other, other_epigenome) -> 'Genome':
@@ -87,8 +89,8 @@ class Individual:
                 telemetry={},
                 epigenome={},
                 species=None,
-                parents=0,
-                children=0,
+                parents=[],
+                children=[],
                 birth_date=None,
                 death_date=None,
                 generation=0,
@@ -98,20 +100,42 @@ class Individual:
         self.name           = str(name)         if name is not None else str(uuid.uuid4())
         self.environment    = str(environment)  if environment is not None else None
         self.population     = str(population)   if population is not None else None
-        self.controller     = _clean_ctrl_command(controller)
-        self.genome         = genome
+        self.controller     = self._clean_ctrl_command(controller)
+        self._genome        = genome
+        self._genome_cls    = type(genome)
         self.score          = str(score)        if score is not None else None
         self.telemetry      = dict(telemetry)
         self.epigenome      = dict(epigenome)
         self.species        = str(species)      if species is not None else str(uuid.uuid4())
-        self.parents        = int(parents)
-        self.children       = int(children)
+        self.parents        = [str(name) for name in parents]
+        self.children       = [str(name) for name in children]
         self.birth_date     = str(birth_date)   if birth_date is not None else None
         self.death_date     = str(death_date)   if death_date is not None else None
         self.generation     = int(generation)
         self.ascension      = int(ascension)    if ascension is not None else None
         self.extra          = extra
         self.path           = Path(path)        if path is not None else None
+        assert isinstance(genome, Genome) or isinstance(genome, bytes) or genome is None
+        assert genome is not None or self.path is not None
+
+    @staticmethod
+    def _clean_ctrl_command(command):
+        if command is None:
+            return None
+        elif isinstance(command, Path):
+            command = [command]
+        elif isinstance(command, str):
+            command = shlex.split(command)
+        else:
+            command = list(command)
+        # Don't resolve the path yet in case the PWD changes.
+        program = Path(command[0]) # .expanduser().resolve()
+        command[0] = program
+        for index in range(1, len(command)):
+            arg = command[index]
+            if not isinstance(arg, bytes) and not isinstance(arg, str):
+                command[index] = str(arg)
+        return command
 
     def get_name(self) -> str:
         """
@@ -135,13 +159,16 @@ class Individual:
         """
         Get the command line invocation for the controller program.
         """
-        return self.controller
+        return copy.copy(self.controller)
 
     def get_genome(self) -> Genome:
         """
         Get this individual's genetic data.
+        Genome's are considered immutable.
         """
-        return self.genome
+        if self._genome is None:
+            self._load_genome()
+        return self._genome
 
     def get_score(self) -> str:
         """
@@ -206,17 +233,17 @@ class Individual:
         """
         return self.species
 
-    def get_parents(self) -> int:
+    def get_parents(self) -> [str]:
         """
-        How many parents does this individual have?
+        Get the names of this individual's parents.
         """
-        return self.parents
+        return list(self.parents)
 
-    def get_children(self) -> int:
+    def get_children(self) -> [str]:
         """
-        How many children does this individual have?
+        Get the names of this individual's children.
         """
-        return self.children
+        return list(self.children)
 
     def get_birth_date(self) -> str:
         """
@@ -263,29 +290,52 @@ class Individual:
 
     def get_parameters(self):
         """
-        Serialize the genome into a single-line string for the control system.
+        Format the genome into a binary blob for the control system.
         """
-        if isinstance(self.genome, Epigenome):
-            parameters = self.genome.parameters(self.epigenome)
-        elif isinstance(self.genome, Genome):
-            parameters = self.genome.parameters()
+        genome = self.get_genome()
+        if isinstance(genome, Epigenome):
+            parameters = genome.parameters(self.epigenome)
+        elif isinstance(genome, Genome):
+            parameters = genome.parameters()
         else:
-            parameters = self.genome
+            parameters = genome
         # Check data type.
         if isinstance(parameters, str):
             parameters = parameters.encode("utf-8")
         assert isinstance(parameters, bytes)
         return parameters
 
+    def birth(self) -> (dict, bytes):
+        """
+        Package up this individual for sending it to an environment.
+        """
+        population = self.population
+        if population is None:
+            population = ""
+        controller = self.get_controller()
+        if not controller:
+            raise ValueError("missing controller")
+        controller[0] = str(controller[0]) # Convert Path to String
+        parameters = self.get_parameters()
+        metadata = {
+            "name": self.name,
+            "population": population,
+            "parents": self.parents,
+            "controller": controller,
+            "genome": len(parameters),
+        }
+        return (metadata, parameters)
+
     def clone(self):
         """
         Create an identical copy of this genome.
         """
         # Clone the genetic material.
-        if isinstance(self.genome, Genome):
-            clone_genome = self.genome.clone()
+        genome = self.get_genome()
+        if isinstance(genome, Genome):
+            clone_genome = genome.clone()
         else:
-            clone_genome = copy.deepcopy(self.genome)
+            clone_genome = copy.deepcopy(genome)
         # Make a new individual with the copied genetics.
         clone = Individual(clone_genome,
                 epigenome   = self.epigenome,
@@ -294,8 +344,8 @@ class Individual:
                 species     = self.species,
                 controller  = self.controller,
                 generation  = self.generation + 1,
-                parents     = 1)
-        self.children += 1
+                parents     = [self.name])
+        self.children.append(clone.name)
         return clone
 
     def mate(self, other, speciation_distance=None):
@@ -303,12 +353,13 @@ class Individual:
         Sexually reproduce these two individuals.
         """
         # Mate the genetic material.
-        if isinstance(self.genome, Epigenome):
-            child_genome = self.genome.mate(self.epigenome, other.genome, other.epigenome)
-        elif isinstance(self.genome, Genome):
-            child_genome = self.genome.mate(other.genome)
+        self_genome = self.get_genome()
+        if isinstance(self_genome, Epigenome):
+            child_genome = self_genome.mate(self.epigenome, other.get_genome(), other.epigenome)
+        elif isinstance(self_genome, Genome):
+            child_genome = self_genome.mate(other.get_genome())
         else:
-            raise TypeError(f"expected npc_maker.evo.Genome, found {type(self.genome)}")
+            raise TypeError(f"expected npc_maker.evo.Genome, found {type(self_genome)}")
         # Determine which species the child belongs to.
         if speciation_distance is None:
             species = self.species
@@ -325,11 +376,11 @@ class Individual:
                 species     = species,
                 controller  = self.controller,
                 generation  = max(self.generation, other.generation) + 1,
-                parents     = (1 if self == other else 2))
+                parents     = [self.name, other.name])
         # Update the parent's child count.
-        self.children += 1
+        self.children.append(child.name)
         if self != other:
-            other.children += 1
+            other.children.append(child.name)
         return child
 
     def save(self, path) -> Path:
@@ -343,15 +394,20 @@ class Individual:
 
         Returns the save file's path.
         """
-        if self.name is not None:
-            filename = self.name
-        elif self.ascension is not None:
+        if self.ascension is not None:
             filename = str(self.ascension)
+        elif self.name is not None:
+            filename = self.name
         else:
             raise ValueError("individual has neither name nor ascension")
         path = Path(path)
         assert path.is_dir()
         path = path.joinpath(filename + ".json")
+        # 
+        genome = self.get_genome()
+        if isinstance(genome, Genome):
+            genome = genome.save()
+        assert isinstance(genome, bytes)
         # Unofficial fields, in case of conflict these take lower precedence.
         data = dict(self.extra)
         # Required fields.
@@ -375,17 +431,18 @@ class Individual:
             data["controller"]    = list(data["controller"])
             data["controller"][0] = str(data["controller"][0])
         # 
-        self.path = path
-        with open(path, 'wt') as file:
-            json.dump(data, file)
+        data = json.dumps(data)
+        # Save to a hidden file, sync, and atomic move into place.
+        fd, tmp_path = tempfile.mkstemp()
+        file = os.fdopen(fd, "wb")
+        file.write(data.encode("utf-8"))
+        file.write(b'\x00')
+        file.write(genome)
+        file.flush()
+        file.close()
+        Path(tmp_path).rename(path)
         # 
-        if isinstance(self.genome, Genome):
-            genome = self.genome.save()
-        else:
-            genome = self.genome
-        with open(path, 'ab') as file:
-            file.write(b'\x00')
-            file.write(genome)
+        self.path = path
         return path
 
     @classmethod
@@ -394,44 +451,34 @@ class Individual:
         Load a previously saved individual.
         """
         path = Path(path)
+        text = b''
         with open(path, 'rb') as file:
+            while True:
+                chunk = file.read(io.DEFAULT_BUFFER_SIZE)
+                split = chunk.split(b'\x00', maxsplit=1)
+                text += split[0]
+                if len(split) > 1:
+                    break
+        metadata = json.loads(text)
+        metadata["path"] = path
+        self = cls(None, **metadata)
+        self._genome_cls = genome_cls
+        return self
+
+    def _load_genome(self):
+        with open(self.get_path(), 'rb') as file:
             data = file.read()
         text, binary = data.split(b'\x00', maxsplit=1)
-        metadata = json.loads(text)
-        genome = genome_cls.load(binary)
-        metadata["path"] = path
-        return cls(genome, **metadata)
-
-def _clean_ctrl_command(command):
-    if command is None:
-        return None
-    elif isinstance(command, Path):
-        command = [command]
-    elif isinstance(command, str):
-        command = shlex.split(command)
-    else:
-        command = list(command)
-    # Don't resolve the path yet in case the PWD changes.
-    program = Path(command[0]) # .expanduser().resolve()
-    command[0] = program
-    for index in range(1, len(command)):
-        arg = command[index]
-        if not isinstance(arg, bytes) and not isinstance(arg, str):
-            command[index] = str(arg)
-    return command
+        self._genome = self._genome_cls.load(binary)
 
 class Evolution:
     """
     Abstract class for implementing evolutionary algorithms
     and other similar parameter optimization techniques.
     """
-    def birth(self, parents=[]) -> Individual:
+    def spawn(self):
         """
-        Argument parents is a list of Individual objects.
-
-        Return a new Individual object with the "controller" and "genome"
-        attributes set. All other attributes are optional.
-        The genome may be any JSON-encodable python object.
+        Returns either a single parent to clone or a pair of parents to mate together.
         """
         raise TypeError("abstract method called")
 
@@ -457,6 +504,7 @@ class Replayer(Evolution):
         self._path          = Path(path).expanduser().resolve()
         self._select        = select
         self._score         = score
+        self._scan_time     = -1
         self._population    = [] # List of paths.
         self._scores        = [] # Runs parallel to the population list.
         self._buffer        = [] # Queue of selected individuals wait to be born.
@@ -469,35 +517,33 @@ class Replayer(Evolution):
         Returns a list of file paths.
         """
         self._scan()
-        return self._population
+        return list(self._population)
 
-    def birth(self, parents=[]):
+    def spawn(self):
         self._scan()
         if not self._buffer:
             buffer_size = max(128, len(self._population))
             indices = self._select.select(buffer_size, self._scores)
-            self._buffer = [self._population[i] for i in indices]
-        path = self._buffer.pop()
-        individual = Individual.load(path)
-        return [individual.get_genome(), individual.get_info()]
+            self._buffer.extend(self._population[i] for i in indices)
+        return (self._buffer.pop(),)
 
     def death(self, individual):
         pass
 
     def _scan(self):
-        if getattr(self, "_scan_time", -1) == getmtime(self._path):
+        if self._scan_time == os.path.getmtime(self._path):
             return
         content = [p for p in self._path.iterdir() if p.suffix.lower() == ".json"]
         content.sort()
         if content == self._population:
             return
         self._population = content
-        self._scan_time = getmtime(self._path)
+        self._scan_time = os.path.getmtime(self._path)
         self._calc_scores()
         self._buffer.clear()
 
     def _calc_scores(self):
-        self._scores = []
+        self._scores.clear()
         for path in self._population:
             individual = Individual.load(path)
             score = individual.get_custom_score(self._score)
@@ -518,14 +564,6 @@ class Neat(Evolution):
         """
         Argument seed is the initial individual to begin evolution from.
 
-        Argument population_size is 
-
-        Argument elites is the number of high scoring individuals to be cloned
-                 (without modification) into each new generation.
-
-        Argument select is a mate selection algorithm.
-                 See the `mate_selection` package for more information.
-
         Argument score is an optional custom scoring function.
 
         Argument path is the directory to record data to. This class will
@@ -545,7 +583,9 @@ class Neat(Evolution):
         """
         # Clean and save the arguments.
         assert isinstance(seed, Individual)
-        self.genome_cls             = type(seed.genome)
+        assert seed.get_controller()
+        if seed.score is None: seed.score = 0.0
+        self.genome_cls             = seed._genome_cls
         self.population_size        = int(population_size)
         self.speciation_distance    = float(speciation_distance)
         self.species_distribution   = species_distribution
@@ -553,84 +593,85 @@ class Neat(Evolution):
         self.score_function         = score_function
         assert self.population_size     > 0
         assert self.speciation_distance > 0
-        # Setup data recording.
+        # Setup file system.
         if path is None:
             self._tempdir   = tempfile.TemporaryDirectory() # Keep alive for the lifetime of this object.
             path            = self._tempdir.name
         self._path          = Path(path)
+        if not self._path.exists():
+            self._path.mkdir()
+        assert self._path.is_dir()
+        # Setup data recording.
         self._leaderboard   = int(leaderboard) if leaderboard is not None else 0
         self._hall_of_fame  = int(hall_of_fame) if hall_of_fame is not None else 0
-        assert self._path.is_dir()
         assert self._leaderboard >= 0
         assert self._hall_of_fame >= 0
-        # 
         if self._leaderboard: self._load_leaderboard()
         if self._hall_of_fame: self._load_hall_of_fame()
-        # Initialize our internal data structures.
-        self._ascension     = 0 # Number of individuals who have died.
-        self._generation    = 0 # Generation counter.
-        self._species       = [] # Pairs of (avg-score, members-list), the current mating population.
-        self._parents       = [] # Pairs of individuals, buffer of potential mates.
-        self._elites        = [] # Exemplars of each species from the previous generation, waiting to be cloned into the next generation.
-        self._waiting       = [] # Evaluated individuals, the next generation.
-        self._stagnant      = {} # Species stagnation data: pairs of (high-score, generations)
-        # Create the first generation by mating the seed with itself.
-        if seed.score is None:
-            seed.score = 0.0
-        self._species.append((seed.score, [seed]))
+        # Setup our internal data structures.
+        self._ascension = 0 # Number of individuals who have died.
+        self._parents   = [] # Pairs of individuals, buffer of potential mates.
+        self._load_generation(seed)
+        self._load_population()
+
+    def _load_generation(self, seed):
+        generations = []
+        for path in self.get_path().iterdir():
+            if path.is_dir():
+                try:
+                    gen = int(path.name)
+                except ValueError:
+                    continue
+                assert gen >= 0
+                generations.append(gen)
+        if not generations:
+            self._generation = 0
+            self._next_generation_size = 0
+            self._get_generation_path(0).mkdir()
+            self._get_generation_path(1).mkdir()
+            seed.save(self._get_generation_path(0))
+        else:
+            next_generation = max(generations)
+            current_generation = next_generation - 1
+            assert current_generation in generations
+            self._generation = current_generation
+            self._next_generation_size = len(list(self._get_generation_path(next_generation).iterdir()))
+
+    def _load_population(self):
+        self._population = [] # Individuals who are currently eligable to mate.
+        self._species    = {} # Species UUID -> (avg-score, members-list).
+        # Load all individuals and sort them by species.
+        for path in self._get_generation_path(self._generation).iterdir():
+            individual = Individual.load(self.genome_cls, path)
+            self._population.append(individual)
+            self._species.setdefault(individual.get_species(), []).append(individual)
+        # Calculate each species' average score.
+        for uuid, members in self._species.items():
+            score = sum(self._score(individual) for individual in members) / len(members)
+            self._species[uuid] = (score, members)
 
     def _load_leaderboard(self):
-        self._leaderboard_data = []
-        # 
         leaderboard_path = self.get_leaderboard_path()
         if not leaderboard_path.exists():
             leaderboard_path.mkdir()
         # 
+        self._leaderboard_data = []
         for path in leaderboard_path.iterdir():
-            if path.suffix.lower() == ".json":
-                individual  = Individual.load(path)
-                score       = individual.get_custom_score(self.score_function)
-                ascension   = individual.get_ascension()
-                entry       = (score, -ascension, path)
-                self._leaderboard_data.append(entry)
-        self._settle_leaderboard()
+            self._leaderboard_data.append(Individual.load(self.genome_cls, path))
+        self._leaderboard_data.sort(reverse=True, key=lambda x: (self._score(x), -x.ascension))
 
     def _load_hall_of_fame(self):
-        self._hall_of_fame_data         = []
-        self._hall_of_fame_candidates   = []
+        self._hall_of_fame_data = []
         # Get the path and make sure that it exists.
         hall_of_fame_path = self.get_hall_of_fame_path()
         if not hall_of_fame_path.exists():
             hall_of_fame_path.mkdir()
         # Load individuals from file.
         for path in hall_of_fame_path.iterdir():
-            if path.suffix.lower() == ".json":
-                individual = Individual.load(path)
-                self._hall_of_fame_data.append(individual)
+            individual = Individual.load(self.genome_cls, path)
+            self._hall_of_fame_data.append(individual)
         # Sort the data chronologically.
         self._hall_of_fame_data.sort(key=lambda x: x.get_ascension())
-        # Replace the individuals with their file-paths.
-        self._hall_of_fame_data = [x.get_path() for x in self._hall_of_fame_data]
-
-    def _settle_leaderboard(self):
-        """ Sort and prune the leaderboard. """
-        self._leaderboard_data.sort(reverse=True)
-        while len(self._leaderboard_data) > self._leaderboard:
-            (score, neg_ascension, path) = self._leaderboard_data.pop()
-            path.unlink()
-
-    def _settle_hall_of_fame(self):
-        path = self.get_hall_of_fame_path()
-        # 
-        self._hall_of_fame_candidates.sort()
-        winners = self._hall_of_fame_candidates[-self._hall_of_fame:]
-        winners = [individual for (score, neg_ascension, individual) in winners]
-        winners.sort(key=lambda individual: individual.get_ascension())
-        for individual in winners:
-            individual.save(path)
-            self._hall_of_fame_data.append(individual.get_path())
-        # 
-        self._hall_of_fame_candidates.clear()
 
     def get_ascension(self) -> int:
         """
@@ -649,6 +690,12 @@ class Neat(Evolution):
         Returns the path argument or a temporary directory.
         """
         return self._path
+
+    def _get_generation_path(self, generation):
+        """
+        Each generation is stored in its own directory.
+        """
+        return self._path.joinpath(str(generation))
 
     def get_leaderboard_path(self):
         """
@@ -670,18 +717,22 @@ class Neat(Evolution):
 
     def get_leaderboard(self):
         """
-        The leaderboard is a list of pairs of (path, score).
-        It is sorted descending so leaderboard[0] is the best individual.
+        The leaderboard is sorted descending so leaderboard[0] is the best individual.
         """
-        return [(path, score) for (score, neg_ascension, path) in self._leaderboard_data]
+        if self._leaderboard:
+            return list(self._leaderboard_data)
+        else:
+            return None
 
     def get_hall_of_fame(self):
         """
-        The hall of fame is a list of paths of the best scoring individuals from
-        each generation. It is sorted in chronological order so hall_of_fame[0]
-        is the oldest individual.
+        The hall of fame is a list the best scoring individuals from each generation.
+        It is sorted in chronological order so hall_of_fame[0] is the oldest individual.
         """
-        return list(self._hall_of_fame_data)
+        if self._hall_of_fame:
+            return list(self._hall_of_fame_data)
+        else:
+            return None
 
     def get_best(self):
         """
@@ -692,144 +743,101 @@ class Neat(Evolution):
         """
         if not self._leaderboard:
             raise ValueError("leaderboard is disabled")
-        if not self._leaderboard_data:
+        elif not self._leaderboard_data:
             return None
-        (score, neg_ascension, path) = max(self._leaderboard_data)
-        return Individual.load(self.genome_cls, path)
+        else:
+            return self._leaderboard_data[0]
 
     def _score(self, individual):
         return individual.get_custom_score(self.score_function)
+
+    def spawn(self) -> (Path, Path):
+        if self._next_generation_size >= self.population_size:
+            self._rollover()
+        if not self._parents:
+            self._sample()
+        mother, father = self._parents.pop()
+        if self._score(mother) < self._score(father):
+            mother, father = father, mother
+        return mother, father
 
     def _rollover(self):
         """
         Discard the old generation and move the next generation into its place.
         """
-        # Sort the next generation into its species.
-        self._waiting.sort(key=lambda individual: individual.get_species())
-        self._species.clear()
-        # Scan for contiguous ranges of the same species.
-        prev_uuid = self._waiting[0].get_species()
-        members = []
-        def close_species():
-            nonlocal members
-            score = sum(self._score(individual) for individual in members) / len(members)
-            self._species.append((score, members))
-            members = []
-        # 
-        for individual in self._waiting:
-            uuid = individual.get_species()
-            # Close out the previous species.
-            if uuid != prev_uuid:
-                close_species()
-                prev_uuid = uuid
-            # 
-            members.append(individual)
-        # Close out the final species.
-        close_species()
-        # Update the species stagnation info.
-        remove_species = []
-        for index, (_, members) in enumerate(self._species):
-            species = members[0].get_species()
-            high_score = max(self._score(individual) for individual in members)
-            if species not in self._stagnant or high_score > self._stagnant[species][0]:
-                self._stagnant[species] = [high_score, 0]
-            else:
-                self._stagnant[species][1] += 1
-                if self._stagnant[species][1] >= 15:
-                    remove_species.append(index)
-        for index in reversed(remove_species):
-            self._species.pop(index)
-        # Clone and reevaluate the best individuals from each species.
-        self._elites.clear()
-        for (_, members) in self._species:
-            if len(members) >= 5:
-                best = max(members, key=self._score)
-                self._elites.append(best)
-        # Reset in preparation for the next generation.
-        self._parents.clear()
-        self._waiting.clear()
         self._generation += 1
-        if self._hall_of_fame: self._settle_hall_of_fame()
-        # 
-        if not self._species:
-            raise RuntimeError("total extinction")
+        self._get_generation_path(self._generation + 1).mkdir()
+        self._next_generation_size = 0
+        self._parents.clear()
+        self._load_population()
+        if self._hall_of_fame: self._rollover_hall_of_fame()
+        if self._leaderboard: self._rollover_leaderboard()
+        # Discard a previous generation.
+        prev_prev_generation = self._get_generation_path(self._generation - 2)
+        if prev_prev_generation.exists():
+            for path in prev_prev_generation.iterdir():
+                path.unlink()
+            prev_prev_generation.rmdir()
+
+    def _rollover_leaderboard(self):
+        in_leaderboard = lambda path: path and path.is_relative_to(leaderboard_path)
+        # Add all contestants to the leaderboard.
+        self._leaderboard_data.extend(self._population)
+        self._leaderboard_data.sort(reverse=True, key=lambda x: (self._score(x), -x.ascension))
+        # Discard low performing individuals.
+        leaderboard_path = self.get_leaderboard_path()
+        while len(self._leaderboard_data) > self._leaderboard:
+            individual = self._leaderboard_data.pop()
+            if in_leaderboard(individual.path):
+                individual.path.unlink()
+        # Ensure all remaining individuals are saved to the leaderboard directory.
+        for individual in self._leaderboard_data:
+            if not in_leaderboard(individual.path):
+                individual.save(leaderboard_path)
+
+    def _rollover_hall_of_fame(self):
+        hall_of_fame_path = self.get_hall_of_fame_path()
+        self._population.sort(key=lambda individual: (self._score(individual), -individual.get_ascension()))
+        winners = population[-self._hall_of_fame:]
+        winners.sort(key=lambda individual: individual.get_ascension())
+        for individual in winners:
+            individual.save(hall_of_fame_path)
+            self._hall_of_fame_data.append(individual)
 
     def _sample(self):
         """
         Refill the _parents buffer.
         """
         # Distribute the offspring to species according to their average score.
-        scores = [score for (score, members) in self._species]
+        scores = [score for (score, members) in self._species.values()]
         selected = self.species_distribution.select(self.population_size, scores)
         # Count how many offspring were allocated to each species.
         histogram = [0 for _ in range(len(self._species))]
         for x in selected:
             histogram[x] += 1
         # Sample parents from each species.
-        for (num_offspring, (_, members)) in zip(histogram, self._species):
-            # Cull species when they get too small.
-            if num_offspring <= 1:
-                continue
-            # 
+        for (num_offspring, (_, members)) in zip(histogram, self._species.values()):
             scores = [self._score(individual) for individual in members]
             for pair in self.mate_selection.pairs(num_offspring, scores):
                 self._parents.append([members[index] for index in pair])
         # 
         random.shuffle(self._parents)
 
-    def birth(self, parents=[]) -> 'Individual':
-        # 
-        if len(self._waiting) >= self.population_size:
-            self._rollover()
-        # 
-        if not self._parents and not self._elites:
-            self._sample()
-        # 
-        if self._elites:
-            return self._elites.pop().clone()
-
-        elif random.random() < 0.25:
-            parent, _ = self._parents.pop()
-            return parent.mate(parent, self.speciation_distance)
-
-        else:
-            mother, father = self._parents.pop()
-            if self._score(father) > self._score(mother):
-                mother, father = father, mother
-            return mother.mate(father, self.speciation_distance)
-
     def death(self, individual):
+        # Validate the input.
         if individual is None:
             return
+        if isinstance(individual, str) or isinstance(individual, Path):
+            individual = Individual.load(self.genome_cls, individual)
         assert isinstance(individual, Individual)
-        # Replace the individual's name with its ascension number.
-        individual.name      = None
+        assert individual._genome_cls is self.genome_cls
+        # 
         individual.ascension = self._ascension
         self._ascension += 1
         # Ignore individuals who die without a valid score.
-        score = individual.get_custom_score(self.score_function)
+        score = self._score(individual)
         if score is None or math.isnan(score) or score == -math.inf:
             return
-        # 
-        self._waiting.append(individual)
-        if self._leaderboard:  self._update_leaderboard(individual, score)
-        if self._hall_of_fame: self._update_hall_of_fame(individual, score)
-
-    def _update_leaderboard(self, individual, score):
-        # Check if this individual made it onto the leaderboard.
-        leaderboard_is_full = len(self._leaderboard_data) >= self._leaderboard
-        if leaderboard_is_full and score <= self._leaderboard_data[-1][0]:
-            return
-        # 
-        path = self.get_leaderboard_path()
-        individual.save(path)
-        ascension   = individual.get_ascension()
-        entry       = (score, -ascension, individual.get_path())
-        self._leaderboard_data.append(entry)
-        # 
-        self._settle_leaderboard()
-
-    def _update_hall_of_fame(self, individual, score):
-        ascension   = individual.get_ascension()
-        entry       = (score, -ascension, individual)
-        self._hall_of_fame_candidates.push(entry)
+        # Stash the individual.
+        individual.save(self._get_generation_path(self._generation + 1))
+        self._next_generation_size += 1

@@ -333,7 +333,7 @@ pub fn get_args() -> (EnvironmentSpec, Mode, HashMap<String, String>) {
 /// New individual must be requested before calling this with the [spawn()] and
 /// [mate()] functions.
 pub fn input() -> Result<(Individual, Box<[u8]>), io::Error> {
-    io::stdout().flush().unwrap();
+    io::stdout().flush()?;
 
     let mut line = String::new();
     let stdin = &mut io::stdin().lock();

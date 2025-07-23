@@ -40,8 +40,8 @@ individuals it produces will eventually be given to the death method.
 
 The "**individual**" contains a genome and an associated bundle of metadata.
 The genome is stored as a binary blob; the metadata is stored as a JSON object.
-Unexpected metadata is allowed and preserved as able. The following table
-defines the standard metadata attributes:
+Unexpected metadata is allowed and preserved in python in the attribute `Individual.extra`.
+The following table defines the standard metadata attributes:
 
 | Attribute  | JSON Type | Description |
 | :--------  | :-------: | :---------- |

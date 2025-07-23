@@ -1,11 +1,9 @@
 # The Environment Interface #
 
-This chapter describes the interface between evolution programs and environments.
-The NPC Maker is capable of interacting with almost any simulated environment.
+This chapter describes the interface between evolution programs and environment programs.
 The word "**environment**" refers to a self contained simulated world and
 everything in it, including all of the living bodies and their control systems. 
-The NPC Maker defines a standard interface for interacting with arbitrary
-environments. Users are encouraged to add their own environments.
+The NPC Maker defines a standard interface for interacting with arbitrary environments.
 
 Environments always execute in a different computer process than the main
 program of the NPC Maker framework, which is referred to as

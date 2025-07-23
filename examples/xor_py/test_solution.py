@@ -5,7 +5,8 @@ This tests all combinations of programming languages.
 """
 
 from pathlib import Path
-import npc_maker.env
+from npc_maker.env import Environment
+from npc_maker.evo import Individual
 import json
 import time
 
@@ -34,13 +35,24 @@ solution = [
 
 solution = json.dumps(solution).encode("utf-8")
 
+def spinlock(env):
+    msg = None
+    while not msg:
+        msg = env.poll()
+    return msg
+
 def test_solution():
     for env_path in environments:
         for ctrl_cmd in controllers:
             print("Testing:", env_path, ctrl_cmd)
-            individual  = {"controller": ctrl_cmd, "genome": solution}
-            results     = npc_maker.env.Environment.run({"xor": [individual]}, env_path)
-            score       = float(results["xor"][0].get_score())
+            env = Environment(env_path)
+            msg = spinlock(env)
+            assert "Spawn" in msg
+            indiv = Individual(solution, controller=ctrl_cmd)
+            env.birth(indiv)
+            msg = spinlock(env)
+            assert "Death" in msg
+            score = float(indiv.get_score())
             assert score >= 15.0
             time.sleep(0.25)
 
