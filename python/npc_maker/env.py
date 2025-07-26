@@ -14,7 +14,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 
 __all__ = (
     "Specification",
@@ -554,7 +553,10 @@ class Environment:
         """
         Tell the environment program to exit.
         """
-        self._process.stdin.close()
+        try:
+            self._process.stdin.close()
+        except BrokenPipeError:
+            pass
 
     def _get_population(self, population):
         """

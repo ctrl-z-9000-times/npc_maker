@@ -364,9 +364,11 @@ class Individual:
         if speciation_distance is None:
             species = self.species
         else:
+            speciation_distance = float(speciation_distance)
+            assert speciation_distance > 0
             species = None
             for parent in (self, other):
-                if parent.genome.distance(child_genome) < speciation_distance:
+                if parent._genome.distance(child_genome) < speciation_distance:
                     species = parent.species
                     break
         # 
@@ -389,20 +391,13 @@ class Individual:
 
         Argument path is the directory to save in.
 
-        The filename will be either the individual's name or its ascension number,
-        and the file extension will be ".json"
-
-        Returns the save file's path.
+        Returns the file path of the saved individual.
         """
-        if self.ascension is not None:
-            filename = str(self.ascension)
-        elif self.name is not None:
-            filename = self.name
-        else:
-            raise ValueError("individual has neither name nor ascension")
         path = Path(path)
+        if not path.exists():
+            path.mkdir()
         assert path.is_dir()
-        path = path.joinpath(filename + ".json")
+        path = path.joinpath(self.name + ".json")
         # 
         genome = self.get_genome()
         if isinstance(genome, Genome):
@@ -554,7 +549,6 @@ class Neat(Evolution):
     """
     def __init__(self, seed,
             population_size,
-            speciation_distance,
             species_distribution,
             mate_selection,
             score_function="score",
@@ -587,12 +581,10 @@ class Neat(Evolution):
         if seed.score is None: seed.score = 0.0
         self.genome_cls             = seed._genome_cls
         self.population_size        = int(population_size)
-        self.speciation_distance    = float(speciation_distance)
         self.species_distribution   = species_distribution
         self.mate_selection         = mate_selection
         self.score_function         = score_function
         assert self.population_size     > 0
-        assert self.speciation_distance > 0
         # Setup file system.
         if path is None:
             self._tempdir   = tempfile.TemporaryDirectory() # Keep alive for the lifetime of this object.
@@ -627,14 +619,10 @@ class Neat(Evolution):
         if not generations:
             self._generation = 0
             self._next_generation_size = 0
-            self._get_generation_path(0).mkdir()
-            self._get_generation_path(1).mkdir()
             seed.save(self._get_generation_path(0))
         else:
-            next_generation = max(generations)
-            current_generation = next_generation - 1
-            assert current_generation in generations
-            self._generation = current_generation
+            self._generation = max(0, max(generations) - 1)
+            assert self._generation in generations
             self._next_generation_size = len(list(self._get_generation_path(next_generation).iterdir()))
 
     def _load_population(self):
@@ -651,25 +639,18 @@ class Neat(Evolution):
             self._species[uuid] = (score, members)
 
     def _load_leaderboard(self):
-        leaderboard_path = self.get_leaderboard_path()
-        if not leaderboard_path.exists():
-            leaderboard_path.mkdir()
-        # 
         self._leaderboard_data = []
-        for path in leaderboard_path.iterdir():
-            self._leaderboard_data.append(Individual.load(self.genome_cls, path))
+        if (leaderboard_path := self.get_leaderboard_path()).exists():
+            for path in leaderboard_path.iterdir():
+                self._leaderboard_data.append(Individual.load(self.genome_cls, path))
         self._leaderboard_data.sort(reverse=True, key=lambda x: (self._score(x), -x.ascension))
 
     def _load_hall_of_fame(self):
         self._hall_of_fame_data = []
-        # Get the path and make sure that it exists.
-        hall_of_fame_path = self.get_hall_of_fame_path()
-        if not hall_of_fame_path.exists():
-            hall_of_fame_path.mkdir()
-        # Load individuals from file.
-        for path in hall_of_fame_path.iterdir():
-            individual = Individual.load(self.genome_cls, path)
-            self._hall_of_fame_data.append(individual)
+        if (hall_of_fame_path := self.get_hall_of_fame_path()).exists():
+            for path in hall_of_fame_path.iterdir():
+                individual = Individual.load(self.genome_cls, path)
+                self._hall_of_fame_data.append(individual)
         # Sort the data chronologically.
         self._hall_of_fame_data.sort(key=lambda x: x.get_ascension())
 
@@ -766,18 +747,16 @@ class Neat(Evolution):
         Discard the old generation and move the next generation into its place.
         """
         self._generation += 1
-        self._get_generation_path(self._generation + 1).mkdir()
         self._next_generation_size = 0
         self._parents.clear()
         self._load_population()
         if self._hall_of_fame: self._rollover_hall_of_fame()
         if self._leaderboard: self._rollover_leaderboard()
         # Discard a previous generation.
-        prev_prev_generation = self._get_generation_path(self._generation - 2)
-        if prev_prev_generation.exists():
-            for path in prev_prev_generation.iterdir():
+        if (prev_prev := self._get_generation_path(self._generation - 2)).exists():
+            for path in prev_prev.iterdir():
                 path.unlink()
-            prev_prev_generation.rmdir()
+            prev_prev.rmdir()
 
     def _rollover_leaderboard(self):
         in_leaderboard = lambda path: path and path.is_relative_to(leaderboard_path)
