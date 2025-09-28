@@ -357,6 +357,7 @@ pub trait API {
                     self.reset();
                 }
                 Message::Advance { dt } => {
+                    debug_assert!(dt >= 0.0);
                     self.advance(dt);
                 }
                 Message::SetInput { gin, value } => {

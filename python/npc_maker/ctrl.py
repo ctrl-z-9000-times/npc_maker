@@ -361,7 +361,7 @@ class API:
 
         self.quit()
 
-    def genome(self, environment: 'Path', population: str, value: str):
+    def genome(self, environment: 'Path', population: str, value: bytes):
         """
         Abstract Method
 

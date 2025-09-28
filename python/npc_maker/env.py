@@ -5,8 +5,6 @@ All global functions in this module are for implementing environment programs.
 """
 
 from pathlib import Path
-import npc_maker.ctrl
-import npc_maker.evo
 import collections
 import datetime
 import json
@@ -302,17 +300,18 @@ def input():
     New individual must be requested before calling this with the spawn() and
     mate() functions.
     """
-    # Ignore empty lines.
+    message = b''
     while True:
-        message = sys.stdin.readline()
-        if not message:
+        char = sys.stdin.buffer.read1(1)
+        if not char:
             raise EOFError
-        message = message.strip()
-        if message:
+        if char == b'\n':
             break
+        else:
+            message += char
     message = json.loads(message)
     num_bytes = int(message["genome"])
-    message["genome"] = sys.stdin.read(num_bytes)
+    message["genome"] = sys.stdin.buffer.read(num_bytes)
     return message
 
 def _try_print(*args, **kwargs):
@@ -439,6 +438,7 @@ class SoloAPI:
         >>> if __name__ == "__main__":
         >>>     MyEnvironment.main()
         """
+        import npc_maker.ctrl
         env_spec, mode, settings = get_args()
         assert len(env_spec["populations"]) == 1
         self = cls(env_spec, mode, **settings)
@@ -568,7 +568,7 @@ class Environment:
                 population = all_populations[0]["name"]
             else:
                 raise ValueError("missing population")
-        return population
+        return str(population)
 
     def birth(self, individual):
         """
@@ -589,74 +589,77 @@ class Environment:
         Check for messages from the environment program.
 
         This function is non-blocking and should be called periodically.
+
+        Returns "Spawn" and "Death" messages.
         """
-        # Limit the number of messages received to avoid blocking the main thread.
-        for _ in range(100):
-            # Check for messages.
-            message = self._process.stdout.readline().strip()
-            if not message:
-                # Flush all queued responses on the way out the door.
-                self._process.stdin.flush()
-                return
+        # Check for messages.
+        message = self._process.stdout.readline().strip()
+        if not message:
+            # Flush all queued responses on the way out the door.
+            self._process.stdin.flush()
+            return
 
-            # Decode the message.
-            message = json.loads(message)
+        # Decode the message.
+        message = json.loads(message)
 
-            if "Spawn" in message:
-                message["Spawn"] = self._get_population(message["Spawn"])
-                return message
+        return self._process_message(message)
 
-            elif "Mate" in message:
-                message["Mate"] = [self.outstanding[parent] for parent in message["Mate"]]
-                return message
-
-            elif "Score" in message:
-                score       = message["Score"]
-                name        = message["name"]
-                individual  = self.outstanding[name]
-                individual.score = score
-
-            elif "Telemetry" in message:
-                info        = message["Telemetry"]
-                name        = message["name"]
-                individual  = self.outstanding[name]
-                individual.telemetry.update(info)
-
-            elif "Death" in message:
-                name                    = message["Death"]
-                individual              = self.outstanding.pop(name)
-                individual.deathdate    = _timestamp()
-                message["Death"]        = individual
-                return message
-
-            else:
-                raise ValueError(f'unrecognized message "{message}"')
-
-    def evolve(self, evolution):
+    def _process_message(self, message):
         """
+        Argument message is a python dictionary
+        """
+        if "Spawn" in message:
+            message["Spawn"] = self._get_population(message["Spawn"])
+            return message
 
+        elif "Mate" in message:
+            parents = [self.outstanding[parent] for parent in message["Mate"]]
+            if   len(parents) == 1: child = parents[0].clone()
+            elif len(parents) == 2: child = parents[0].mate(parents[1])
+            self.birth(child)
+
+        elif "Score" in message:
+            score       = message["Score"]
+            name        = message["name"]
+            individual  = self.outstanding[name]
+            individual.score = score
+
+        elif "Telemetry" in message:
+            info        = message["Telemetry"]
+            name        = message["name"]
+            individual  = self.outstanding[name]
+            individual.telemetry.update(info)
+
+        elif "Death" in message:
+            name                    = message["Death"]
+            individual              = self.outstanding.pop(name)
+            individual.deathdate    = _timestamp()
+            message["Death"]        = individual
+            return message
+
+        else:
+            raise ValueError(f'unrecognized message "{message}"')
+
+    def evolve(self, populations):
+        """
         Argument populations is a dict of evolution API instances, indexed by population name.
-
         """
         message = self.poll()
 
         if not message:
-            pass
+            return
 
-        elif "Spawn" in message:
-            population  = message["Spawn"]
-            parents     = evolution[population].spawn()
-            if   len(parents) == 1: child = parents[0].clone()
-            elif len(parents) == 2: child = parents[0].mate(parents[1])
-            self.birth(child)
-
-        elif "Mate" in message:
-            parents = message["Mate"]
-            if   len(parents) == 1: child = parents[0].clone()
-            elif len(parents) == 2: child = parents[0].mate(parents[1])
-            self.birth(child)
+        if "Spawn" in message:
+            pop_name   = message["Spawn"]
+            individual = populations[pop_name].spawn()
+            if not individual.get_population():
+                individual.population = pop_name
+            self.birth(individual)
 
         elif "Death" in message:
             individual = message["Death"]
-            population = self._get_population(individual.get_population())
-            evolution[population].death(individual)
+            pop_name   = self._get_population(individual.get_population())
+            populations[pop_name].death(individual)
+
+        else:
+            raise ValueError(f'unrecognized message "{message}"')
