@@ -486,28 +486,28 @@ class Environment:
         Argument stderr is the file descriptor to use for the subprocess's stderr channel.
                  By default, the controller will inherit this process's stderr channel.
         """
-        self.outstanding = {}
+        self._outstanding = {}
         self._tempdir = tempfile.TemporaryDirectory()
         # Clean the arguments.
-        self.env_spec = Specification(env_spec)
-        self.mode = str(mode).strip().lower()
-        assert self.mode in ('graphical', 'headless')
+        self._env_spec = Specification(env_spec)
+        self._mode = str(mode).strip().lower()
+        assert self._mode in ('graphical', 'headless')
         settings = {str(key) : str(value) for key, value in settings.items()}
         # Fill in default settings values and check for extra arguments.
-        settings_spec = self.env_spec["settings"]
-        self.settings = {item["name"] : item["default"] for item in settings_spec}
+        settings_spec = self._env_spec["settings"]
+        self._settings = {item["name"] : item["default"] for item in settings_spec}
         for key, value in settings.items():
-            if key not in self.settings:
+            if key not in self._settings:
                 raise ValueError(f"unrecognized environment setting \"{key}\"")
-            self.settings[key] = value
+            self._settings[key] = value
         # Assemble the environment's optional settings.
         settings_list = []
-        for key, value in self.settings.items():
+        for key, value in self._settings.items():
             settings_list.append(str(key))
             settings_list.append(str(value))
         # 
         self._process = subprocess.Popen(
-            [self.env_spec["path"], self.env_spec["spec"], self.mode] + settings_list,
+            [self._env_spec["path"], self._env_spec["spec"], self._mode] + settings_list,
             stdin  = subprocess.PIPE,
             stdout = subprocess.PIPE,
             stderr = stderr)
@@ -528,26 +528,26 @@ class Environment:
         Get the environment specification.
         This returns the loaded JSON object, *not* its filesystem path.
         """
-        return self.env_spec
+        return self._env_spec
 
     def get_mode(self):
         """
         Get the output display "mode" argument.
         """
-        return self.mode
+        return self._mode
 
     def get_settings(self):
         """
         Get the "settings" argument.
         """
-        return dict(self.settings)
+        return dict(self._settings)
 
     def get_outstanding(self):
         """
         Get all individuals who are currently alive in this environment.
         Returns a dictionary indexed by individuals names.
         """
-        return self.outstanding
+        return dict(self._outstanding)
 
     def quit(self):
         """
@@ -563,7 +563,7 @@ class Environment:
         Clean the population argument and fill in its default value.
         """
         if not population:
-            all_populations = self.env_spec["populations"]
+            all_populations = self._env_spec["populations"]
             if len(all_populations) == 1:
                 population = all_populations[0]["name"]
             else:
@@ -579,7 +579,7 @@ class Environment:
         self._process.stdin.write(json.dumps(metadata).encode("utf-8"))
         self._process.stdin.write(b"\n")
         self._process.stdin.write(genome)
-        self.outstanding[individual.name] = individual
+        self._outstanding[individual.name] = individual
         individual.birth_date = _timestamp()
         individual.save(self._tempdir.name)
         individual._genome = None
@@ -613,27 +613,29 @@ class Environment:
             return message
 
         elif "Mate" in message:
-            parents = [self.outstanding[parent] for parent in message["Mate"]]
+            parents = [self._outstanding[parent] for parent in message["Mate"]]
             if   len(parents) == 1: child = parents[0].clone()
             elif len(parents) == 2: child = parents[0].mate(parents[1])
             self.birth(child)
+            message["Mate"] = child
+            return message
 
         elif "Score" in message:
             score       = message["Score"]
             name        = message["name"]
-            individual  = self.outstanding[name]
+            individual  = self._outstanding[name]
             individual.score = score
 
         elif "Telemetry" in message:
             info        = message["Telemetry"]
             name        = message["name"]
-            individual  = self.outstanding[name]
+            individual  = self._outstanding[name]
             individual.telemetry.update(info)
 
         elif "Death" in message:
             name                    = message["Death"]
-            individual              = self.outstanding.pop(name)
-            individual.deathdate    = _timestamp()
+            individual              = self._outstanding.pop(name)
+            individual.death_date   = _timestamp()
             message["Death"]        = individual
             return message
 
@@ -643,9 +645,10 @@ class Environment:
     def evolve(self, populations):
         """
         Argument populations is a dict of evolution API instances, indexed by population name.
+
+        Returns either None or an Individual if one was just born or died.
         """
         message = self.poll()
-
         if not message:
             return
 
@@ -655,11 +658,16 @@ class Environment:
             if not individual.get_population():
                 individual.population = pop_name
             self.birth(individual)
+            return individual
 
         elif "Death" in message:
             individual = message["Death"]
             pop_name   = self._get_population(individual.get_population())
             populations[pop_name].death(individual)
+            return individual
+
+        elif "Mate" in message:
+            return message["Mate"] # Already processed by poll()
 
         else:
             raise ValueError(f'unrecognized message "{message}"')

@@ -13,6 +13,7 @@ import pickle
 import random
 import shlex
 import tempfile
+import threading
 import uuid
 
 __all__ = (
@@ -40,7 +41,7 @@ def _copy_file(src_file, dst_dir):
     # 
     with open(src_file, 'rb') as src:
         data = src.read()
-    # Write to temp file and atmoic move into place.
+    # Write to temp file and atomic move into place.
     fd, tmp_path = tempfile.mkstemp()
     file = os.fdopen(fd, "wb")
     file.write(data)
@@ -390,10 +391,11 @@ class Individual:
         """
         # Mate the genetic material.
         self_genome = self.get_genome()
+        other_genome = other.get_genome()
         if isinstance(self_genome, Epigenome):
-            child_genome = self_genome.mate(self.epigenome, other.get_genome(), other.epigenome)
+            child_genome = self_genome.mate(self.epigenome, other_genome, other.epigenome)
         elif isinstance(self_genome, Genome):
-            child_genome = self_genome.mate(other.get_genome())
+            child_genome = self_genome.mate(other_genome)
         else:
             raise TypeError(f"expected npc_maker.evo.Genome, found {type(self_genome)}")
         # Determine which species the child belongs to.
@@ -512,13 +514,21 @@ class Individual:
 class Population:
     """
     Base class for groups of individuals stored together in a directory.
+
+    This class manage individuals in a single population without replacement.
+    Individuals are added but never removed. The population grows without bounds.
     """
     def __init__(self, genome_cls, path, population_size=0, leaderboard=0, hall_of_fame=0, score="score"):
         """
+        Argument genome_cls should be either a subclass of Genome or a suitable
+                 factory function to produce Genomes from byte string.
+
         Argument path is the directory to record data to. This class will
                  incorporate any existing data in the directory to resume after
                  a program shutdown.
                  If omitted this creates a temporary directory.
+
+        Argument population_size is required for the leaderboard and hall_of_fame.
 
         Argument leaderboard is the number top performing of individuals to save.
                  If zero or None (the default) then the leaderboard is disabled.
@@ -535,6 +545,7 @@ class Population:
         """
         self._genome_cls = genome_cls
         self._path = self._clean_path(path)
+        self._lock = threading.RLock()
         self._load_metadata()
         self._load_members()
         # Setup data recording.
@@ -612,13 +623,14 @@ class Population:
         return metadata
 
     def _save_metadata(self, metadata={}):
-        # Update the metadata from this structure.
-        metadata["ascension"] = self._ascension
-        metadata["generation"] = self._generation
-        metadata["generation_size"] = self._generation_size
-        # 
-        with open(self._get_metadata_path(), 'wt') as file:
-            json.dump(file, metadata)
+        # Update the metadata.
+        with self._lock:
+            metadata["ascension"] = self._ascension
+            metadata["generation"] = self._generation
+            metadata["generation_size"] = self._generation_size
+            # 
+            with open(self._get_metadata_path(), 'wt') as file:
+                json.dump(file, metadata)
 
     def _load_members(self):
         self._members = []
@@ -661,24 +673,30 @@ class Population:
         """
         Returns the current members of the population.
         """
-        return list(self._members)
+        with self._lock:
+            return list(self._members)
 
     def get_leaderboard(self):
         """
-        The leaderboard is sorted descending so leaderboard[0] is the best individual.
+        Returns a list of individuals, sorted sorted descending by score,
+        so that leaderboard[0] is the best individual.
         """
         if self._leaderboard:
-            return list(self._leaderboard_data)
+            with self._lock:
+                return list(self._leaderboard_data)
         else:
             return None
 
     def get_hall_of_fame(self):
         """
-        The hall of fame is a list the best scoring individuals from each generation.
-        It is sorted in chronological order so hall_of_fame[0] is the oldest individual.
+        Returns a list of individuals. These are the best scoring individuals
+        from each generation, sorted chronologically by ascension,
+        so that hall_of_fame[0] is the oldest individual and hall_of_fame[-1] is
+        the youngest.
         """
         if self._hall_of_fame:
-            return list(self._hall_of_fame_data)
+            with self._lock:
+                return list(self._hall_of_fame_data)
         else:
             return None
 
@@ -689,12 +707,13 @@ class Population:
         Only available if the leaderboard is enabled.
         Returns None if the leaderboard is empty.
         """
-        if not self._leaderboard:
-            raise ValueError("leaderboard is disabled")
-        elif not self._leaderboard_data:
-            return None
-        else:
-            return self._leaderboard_data[0]
+        with self._lock:
+            if not self._leaderboard:
+                raise ValueError("leaderboard is disabled")
+            elif not self._leaderboard_data:
+                return None
+            else:
+                return self._leaderboard_data[0]
 
     def get_ascension(self) -> int:
         """
@@ -738,18 +757,21 @@ class Population:
     def add(self, individual):
         """
         Insert a new individual into this population.
+
+        This method may be called by multiple parallel threads of execution.
         """
-        individual = self._prepare_individual(individual)
-        if not individual:
-            return
-        # 
-        individual.save(self._path)
-        self._members.append(individual)
-        # 
-        if self._population_size:
-            _copy_file(individual.path, self._get_generation_path())
-            if self._generation_size >= self._population_size:
-                self._rollover()
+        with self._lock:
+            individual = self._prepare_individual(individual)
+            if not individual:
+                return
+            # 
+            individual.save(self._path)
+            self._members.append(individual)
+            # 
+            if self._population_size:
+                _copy_file(individual.path, self._get_generation_path())
+                if self._generation_size >= self._population_size:
+                    self._rollover()
 
     def _rollover(self):
         if self._leaderboard: self._rollover_leaderboard()
@@ -791,21 +813,22 @@ class Population:
 
 class Generation(Population):
     """
-    Manage individuals in large batches, with an instantaneous rollover from one
-    generation to the next.
+    Manages individuals in large batches, with an instantaneous rollover from
+    one generation to the next.
     """
     def __init__(self, *args, **kwargs):
         Population.__init__(self, *args, **kwargs)
         assert self._population_size > 0, "missing argument population_size"
 
     def add(self, individual):
-        individual = self._prepare_individual(individual)
-        if not individual:
-            return
-        # 
-        individual.save(self._get_generation_path())
-        if self._generation_size >= self._population_size:
-            self._rollover()
+        with self._lock:
+            individual = self._prepare_individual(individual)
+            if not individual:
+                return
+            # 
+            individual.save(self._get_generation_path())
+            if self._generation_size >= self._population_size:
+                self._rollover()
 
     def _rollover_generation(self):
         self._generation += 1
@@ -821,36 +844,40 @@ class Generation(Population):
 
 class Continuous(Population):
     """
-    Manage individuals in a circular queue, replacing the oldest member once full.
+    Manages individuals in a circular queue, replacing the oldest member once full.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self._population_size > 0, "missing argument population_size"
 
     def add(self, individual):
-        while len(self._members) >= self._population_size:
-            remove = self._members.pop(0)
-            remove.path.unlink()
-        super().add(individual)
+        with self._lock:
+            while len(self._members) >= self._population_size:
+                remove = self._members.pop(0)
+                remove.path.unlink()
+            super().add(individual)
 
 class Overflowing(Population):
     """
-    Replace individuals at random once the population is full.
+    Replaces individuals at random once the population is full.
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self._population_size > 0, "missing argument population_size"
 
     def add(self, individual):
-        while len(self._members) >= self._population_size:
-            remove =  self._members.pop(random.randrange(len(self._members)))
-            remove.path.unlink()
-        super().add(individual)
+        with self._lock:
+            while len(self._members) >= self._population_size:
+                remove =  self._members.pop(random.randrange(len(self._members)))
+                remove.path.unlink()
+            super().add(individual)
 
 class Evolution:
     """
     Abstract class for implementing evolutionary algorithms
     and other similar parameter optimization techniques.
+
+    Both the spawn and death methods should be thread-safe.
     """
     def spawn(self):
         """
@@ -879,6 +906,7 @@ class Replayer(Evolution):
         """
         self._genome_cls    = genome_cls
         self._path          = Path(path)
+        self._lock          = threading.RLock()
         self._select        = select
         self._score         = score
         self._scan_time     = -1
@@ -890,16 +918,20 @@ class Replayer(Evolution):
         """
         Returns a list of individuals.
         """
-        self._scan()
-        return list(self._members)
+        with self._lock:
+            self._scan()
+            return list(self._members)
 
     def spawn(self):
-        self._scan()
-        if not self._buffer:
-            buffer_size = len(self._members)
-            indices = self._select.select(buffer_size, self._scores)
-            self._buffer.extend(self._members[i] for i in indices)
-        return self._buffer.pop()
+        with self._lock:
+            self._scan()
+            if not self._buffer:
+                buffer_size = len(self._members)
+                indices = self._select.select(buffer_size, self._scores)
+                self._buffer.extend(self._members[i] for i in indices)
+            individual = self._buffer.pop()
+        # Reload into a new instance for the environment to modify.
+        return Individual.load(self._genome_cls, individual.get_path())
 
     def death(self, individual):
         pass
@@ -931,14 +963,17 @@ class Neat(Evolution, Generation):
         # Clean and save the arguments.
         assert isinstance(seed, Individual)
         assert seed.get_controller()
-        if seed.score is None: seed.score = 0.0
         Generation.__init__(self, seed._genome_cls, path, population_size, leaderboard, hall_of_fame, score)
         self.species_distribution   = species_distribution
         self.mate_selection         = mate_selection
         self.score         = score
         # Setup our internal data structures.
         self._sort_species()
+        # The zeroth generation only contains the seed, and is immediately
+        # processed so the user never sees generation zero.
         if not self._members:
+            if seed.score is None:
+                seed.score = 0.0
             self.add(seed)
             self._rollover()
 
@@ -977,9 +1012,10 @@ class Neat(Evolution, Generation):
         random.shuffle(self._parents)
 
     def spawn(self):
-        if not self._parents:
-            self._sample()
-        mother, father = self._parents.pop()
+        with self._lock:
+            if not self._parents:
+                self._sample()
+            mother, father = self._parents.pop()
         if mother.get_custom_score(self._score) < father.get_custom_score(self._score):
             mother, father = father, mother
         return mother.mate(father)
