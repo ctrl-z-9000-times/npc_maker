@@ -108,6 +108,12 @@ class Controller:
         """
         return " ".join(str(arg) for arg in self.command)
 
+    def same_command(self, command):
+        """
+        Check if this controller is running the given command.
+        """
+        return self.command == _clean_ctrl_command(command)
+
     def __repr__(self):
         return "<npc_maker.env_api.Instance: {}>".format(repr(self.get_command()))
 

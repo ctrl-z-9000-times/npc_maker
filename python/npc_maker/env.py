@@ -454,7 +454,7 @@ class SoloAPI:
             name       = individual["name"]
             command    = individual["controller"]
             # Start a new controller process.
-            if controller is None or controller.command != command:
+            if controller is None or not controller.same_command(command):
                 controller = npc_maker.ctrl.Controller(env_spec, population, command)
             assert controller.is_alive()
             controller.genome(individual["genome"])

@@ -167,10 +167,7 @@ impl Controller {
     pub fn save(&mut self) -> Result<()> {
         writeln!(self.stdin, "S")?;
         self.stdin.flush()?;
-
-        todo!(); // Block until response
-
-        // Ok(())
+        Ok(())
     }
 
     ///  Load the state of the control system from file.
@@ -438,7 +435,7 @@ pub trait API {
     ///
     /// Optional, panics by default.
     fn custom(&mut self, message_type: char, message_body: &str) {
-        panic!("unsupported operation: custom")
+        panic!("unsupported operation: {}", message_type)
     }
 
     /// This method is called just before the controller process exits.
