@@ -4,6 +4,7 @@
 
 pub mod ctrl;
 pub mod env;
+pub mod evo;
 
 fn read_bytes(reader: &mut impl std::io::BufRead, len: usize) -> std::io::Result<Box<[u8]>> {
     let mut data = Vec::with_capacity(len);

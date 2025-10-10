@@ -5,11 +5,18 @@
 //! it contains. Environments should use stderr to report any diagnostic or
 //! unformatted messages(see [eprintln!()]).
 
+use crate::evo;
+use process_anywhere::{Computer, Process};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
+
+fn timestamp() -> String {
+    todo!()
+}
 
 /// Static description of an environment and its interfaces.  
 /// Each environment specification file contains one of these.  
@@ -375,7 +382,7 @@ pub struct Individual {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 #[non_exhaustive]
-pub enum EvolutionMessage {
+pub enum Message {
     /// Request a new individual from the evolutionary algorithm.
     Spawn {
         #[serde(rename = "Spawn", default)]
@@ -392,7 +399,7 @@ pub enum EvolutionMessage {
     /// Report the score or reproductive fitness of an individual.
     Score {
         #[serde(rename = "Score")]
-        score: String,
+        value: String,
         name: String,
     },
 
@@ -412,9 +419,10 @@ pub enum EvolutionMessage {
 
 /// Request a new individual from the evolutionary algorithm.
 ///
-/// Argument population is optional if the environment contains exactly one population.
-pub fn spawn(population: Option<&str>) {
-    println!(r#"{{"Spawn":"{}"}}"#, population.unwrap_or(""));
+/// Argument population is optional (use empty string) if the environment
+/// contains exactly one population.
+pub fn spawn(population: &str) {
+    println!(r#"{{"Spawn":"{}"}}"#, population);
 }
 
 /// Request to mate two specific individuals together to produce a child individual.
@@ -426,17 +434,19 @@ pub fn mate(parent1: &str, parent2: &str) {
 ///
 /// This should be called *before* calling [death] on the individual.
 ///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn score(individual: Option<&str>, value: &str) {
-    println!(r#"{{"Score":"{value}","name":"{}"}}"#, individual.unwrap_or(""));
+/// Argument individual is optional (use empty string) if the environment
+/// contains exactly one individual.
+pub fn score(individual: &str, value: &str) {
+    println!(r#"{{"Score":"{value}","name":"{}"}}"#, individual);
 }
 
 /// Report extra information about an individual.
 ///
 /// Argument info is a mapping of string key-value pairs.
 ///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn telemetry(individual: Option<&str>, info: &HashMap<String, String>) {
+/// Argument individual is optional (use empty string) if the environment
+/// contains exactly one individual.
+pub fn telemetry(individual: &str, info: &HashMap<String, String>) {
     let mut json = String::new();
     for (key, value) in info {
         json.push('"');
@@ -449,7 +459,7 @@ pub fn telemetry(individual: Option<&str>, info: &HashMap<String, String>) {
         json.push(',');
     }
     json.pop(); // Remove trailing comma.
-    println!(r#"{{"Telemetry":{{{json}}},"name":"{}"}}"#, individual.unwrap_or(""));
+    println!(r#"{{"Telemetry":{{{json}}},"name":"{}"}}"#, individual);
 }
 
 /// Notify the evolutionary algorithm that the given individual has died.
@@ -457,9 +467,235 @@ pub fn telemetry(individual: Option<&str>, info: &HashMap<String, String>) {
 /// The individual's score or reproductive fitness should be reported
 /// using the [score()] function *before* calling this method.
 ///
-/// Argument individual is optional if the environment contains exactly one individual.
-pub fn death(individual: Option<&str>) {
-    println!(r#"{{"Death":"{}"}}"#, individual.unwrap_or(""));
+/// Argument individual is optional (use empty string) if the environment
+/// contains exactly one individual.
+pub fn death(individual: &str) {
+    println!(r#"{{"Death":"{}"}}"#, individual);
+}
+
+/// This class encapsulates an instance of an environment and provides methods
+/// for using environments.
+///
+/// Each environment instance execute in its own subprocess
+/// and communicates with the caller over its standard I/O channels.
+pub struct Environment {
+    env_spec: Arc<EnvironmentSpec>,
+    mode: Mode,
+    settings: HashMap<String, String>,
+    process: Box<Process>,
+    outstanding: HashMap<String, evo::Individual>,
+    stderr: Box<dyn Write>,
+}
+
+impl Environment {
+    /// Start running an environment program.
+    ///
+    /// Argument computer is the hardware address to execute the environment on.
+    ///
+    /// Argument env_spec is the environment specification.
+    ///
+    /// Argument mode controls whether the environment shows graphical output.
+    ///
+    /// Argument settings is a dict of command line arguments for the environment process.
+    ///          These must match what is listed in the environment specification.
+    ///
+    /// Argument stderr is the file descriptor to use for the subprocess's stderr channel.
+    ///          By default, the controller will inherit this process's stderr channel.
+    pub fn new(
+        computer: Arc<Computer>,
+        env_spec: Arc<EnvironmentSpec>,
+        mode: Mode,
+        settings: HashMap<String, String>,
+        stderr: Option<Box<dyn Write>>,
+    ) -> Self {
+        let stderr = stderr.unwrap_or_else(|| Box::new(io::stderr()));
+        // Assemble the command line invocation.
+        let mut command = vec![
+            env_spec.path.as_os_str().to_str().unwrap().into(),
+            env_spec.spec.as_os_str().to_str().unwrap().into(),
+            mode.to_string(),
+        ];
+        for arg in env_spec.settings.iter() {
+            command.push(arg.name().to_string());
+            if let Some(value) = settings.get(arg.name()) {
+                command.push(value.to_string());
+            } else {
+                command.push(arg.default());
+            }
+        }
+        let command_str: Vec<&str> = command.iter().map(String::as_str).collect();
+        Self {
+            env_spec,
+            mode,
+            settings,
+            process: computer.exec(&command_str).unwrap(),
+            outstanding: HashMap::new(),
+            stderr,
+        }
+    }
+
+    /// Check if the environment subprocess is still running.
+    pub fn is_alive(&mut self) -> bool {
+        self.process.is_alive().unwrap_or(false)
+    }
+
+    /// Get the environment specification argument.
+    pub fn get_env_spec(&self) -> &EnvironmentSpec {
+        &self.env_spec
+    }
+
+    /// Get the output display "mode" argument.
+    pub fn get_mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Get the "settings" argument.
+    pub fn get_settings(&self) -> &HashMap<String, String> {
+        &self.settings
+    }
+
+    /// Get all individuals who are currently alive in this environment.
+    /// Returns a dictionary indexed by individuals names.
+    pub fn get_outstanding(&self) -> &HashMap<String, evo::Individual> {
+        &self.outstanding
+    }
+
+    pub fn get_outstanding_mut(&mut self) -> &mut HashMap<String, evo::Individual> {
+        &mut self.outstanding
+    }
+
+    /// Tell the environment program to exit.
+    pub fn quit(&mut self) {
+        self.forward_stderr().unwrap();
+        self.process.close_stdin().unwrap()
+    }
+
+    fn forward_stderr(&mut self) -> Result<(), process_anywhere::Error> {
+        let data = self.process.error_bytes()?;
+        if !data.is_empty() {
+            self.stderr.write_all(&data)?;
+        }
+        Ok(())
+    }
+
+    /// Check for messages from the environment program.
+    ///
+    /// This function is non-blocking and should be called periodically.
+    pub fn poll(&mut self) -> Result<Option<Message>, process_anywhere::Error> {
+        self.forward_stderr()?;
+        // Read the next message or return early.
+        let Some(line) = self.process.recv_line()? else {
+            return Ok(None);
+        };
+        //
+        let mut message: Message = serde_json::from_str(&line).unwrap();
+        // Fill in missing fields.
+        match &mut message {
+            Message::Spawn { population } => {
+                if population.is_empty() {
+                    if self.env_spec.populations.len() == 1 {
+                        *population = self.env_spec.populations[0].name.to_string();
+                    } else {
+                        panic!("missing population");
+                    }
+                }
+            }
+            Message::Score { name, .. } | Message::Telemetry { name, .. } | Message::Death { name, .. } => {
+                if name.is_empty() {
+                    if self.outstanding.len() == 1 {
+                        *name = self.outstanding.keys().next().unwrap().to_string();
+                    } else {
+                        panic!("missing name");
+                    }
+                }
+            }
+            _ => {}
+        }
+        // Process the message if able.
+        if let Message::Score { name, value } = &mut message {
+            let individual = self.outstanding.get_mut(name).unwrap();
+            individual.score = std::mem::take(value);
+            return Ok(None); // consume the message
+        }
+        if let Message::Telemetry { name, info } = &mut message {
+            let individual = self.outstanding.get_mut(name).unwrap();
+            for (k, v) in info.drain() {
+                individual.telemetry.insert(k, v);
+            }
+            return Ok(None); // consume the message
+        }
+        if let Message::Death { name } = &mut message {
+            let individual = self.outstanding.get_mut(name).unwrap();
+            individual.death_date = timestamp();
+        }
+        Ok(Some(message))
+    }
+
+    /*
+    /// Update the environment.
+    ///
+    /// Argument populations is a dict of evolution API instances, indexed by population name.
+    pub fn evolve(&mut self, evolution: HashMap<String, &dyn evo::Evolution>) -> Result<(), process_anywhere::Error> {
+        let Some(message) = self.poll()? else {
+            return Ok(());
+        };
+        match message {
+            Message::Spawn { population } => {
+                let (individual, genome) = evolution[&population].spawn();
+                self.birth(individual, &genome);
+            }
+            Message::Mate { parents } => {
+                let mother = self.outstanding.get_mut(&parents[0]).unwrap();
+                let father = self.outstanding.get_mut(&parents[1]).unwrap();
+                // let individual = mother.mate(father);
+                // self.birth(individual);
+                todo!();
+            }
+            Message::Death { name } => {
+                let individual = self.outstanding.remove(&name).unwrap();
+                evolution[&individual.population].death(individual);
+            }
+            _ => panic!("unrecognized message {message:?}"),
+        }
+        Ok(())
+    }
+    */
+
+    /// Send an individual to the environment.
+    ///
+    /// Argument individual is moved to the list of outstanding individuals.
+    ///
+    /// Argument genome is sent to the controller, and may differ from the given
+    /// individual's genome.
+    pub fn birth(&mut self, mut individual: evo::Individual, genome: &[u8]) {
+        #[derive(Serialize)]
+        struct Metadata<'a> {
+            name: &'a str,
+            population: &'a str,
+            parents: &'a [String],
+            controller: &'a [String],
+            genome: usize,
+        }
+        let metadata = Metadata {
+            name: &individual.name,
+            population: &individual.population,
+            parents: &individual.parents,
+            controller: &individual.controller,
+            genome: genome.len(),
+        };
+        let mut message = serde_json::to_vec(&metadata).unwrap();
+        message.push(b'\n');
+        message.extend_from_slice(genome);
+        self.process.send_bytes(&message).unwrap();
+        individual.birth_date = timestamp();
+        self.outstanding.insert(individual.name.to_string(), individual);
+    }
+}
+
+impl Drop for Environment {
+    fn drop(&mut self) {
+        let _ = self.forward_stderr();
+    }
 }
 
 #[cfg(test)]
@@ -509,36 +745,36 @@ mod tests {
     #[test]
     fn recv_string() {
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Spawn {
+            serde_json::to_string(&Message::Spawn {
                 population: String::new()
             })
             .unwrap(),
             r#"{"Spawn":""}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Spawn {
+            serde_json::to_string(&Message::Spawn {
                 population: "pop1".to_string()
             })
             .unwrap(),
             r#"{"Spawn":"pop1"}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Mate {
+            serde_json::to_string(&Message::Mate {
                 parents: ["parent1".to_string(), "parent2".to_string()]
             })
             .unwrap(),
             r#"{"Mate":["parent1","parent2"]}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Score {
+            serde_json::to_string(&Message::Score {
                 name: "xyz".to_string(),
-                score: "-3.7".to_string(),
+                value: "-3.7".to_string(),
             })
             .unwrap(),
             r#"{"Score":"-3.7","name":"xyz"}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Telemetry {
+            serde_json::to_string(&Message::Telemetry {
                 name: "abcd".to_string(),
                 info: HashMap::new()
             })
@@ -546,11 +782,11 @@ mod tests {
             r#"{"Telemetry":{},"name":"abcd"}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Death { name: String::new() }).unwrap(),
+            serde_json::to_string(&Message::Death { name: String::new() }).unwrap(),
             r#"{"Death":""}"#
         );
         assert_eq!(
-            serde_json::to_string(&EvolutionMessage::Death {
+            serde_json::to_string(&Message::Death {
                 name: "abc".to_string()
             })
             .unwrap(),

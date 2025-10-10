@@ -570,6 +570,17 @@ class Environment:
                 raise ValueError("missing population")
         return str(population)
 
+    def _get_name(self, name):
+        """
+        Clean the individual name argument and fill in its default value.
+        """
+        if not name:
+            if len(self._outstanding) == 1:
+                name = next(self._outstanding)
+            else:
+                raise ValueError("missing name")
+        return str(name)
+
     def birth(self, individual):
         """
         Send an individual to the environment.
@@ -602,45 +613,36 @@ class Environment:
         # Decode the message.
         message = json.loads(message)
 
-        return self._process_message(message)
-
-    def _process_message(self, message):
-        """
-        Argument message is a python dictionary
-        """
+        # Fill in missing fields.
         if "Spawn" in message:
             message["Spawn"] = self._get_population(message["Spawn"])
-            return message
+        elif "Score" in message or "Telemetry" in message:
+            message["name"] = self._get_name(message["name"])
+        elif "Death" in message:
+            message["Death"] = self._get_name(message["Death"])
 
-        elif "Mate" in message:
-            parents = [self._outstanding[parent] for parent in message["Mate"]]
-            if   len(parents) == 1: child = parents[0].clone()
-            elif len(parents) == 2: child = parents[0].mate(parents[1])
-            self.birth(child)
-            message["Mate"] = child
-            return message
-
-        elif "Score" in message:
+        # Process the message if able.
+        if "Score" in message:
             score       = message["Score"]
             name        = message["name"]
             individual  = self._outstanding[name]
             individual.score = score
+            return # consume the message
 
         elif "Telemetry" in message:
             info        = message["Telemetry"]
             name        = message["name"]
             individual  = self._outstanding[name]
             individual.telemetry.update(info)
+            return # consume the message
 
         elif "Death" in message:
-            name                    = message["Death"]
-            individual              = self._outstanding.pop(name)
-            individual.death_date   = _timestamp()
-            message["Death"]        = individual
-            return message
+            name        = message["Death"]
+            individual  = self._outstanding.pop(name)
+            individual.death_date = _timestamp()
+            message["Death"] = individual
 
-        else:
-            raise ValueError(f'unrecognized message "{message}"')
+        return message
 
     def evolve(self, populations):
         """
@@ -660,14 +662,18 @@ class Environment:
             self.birth(individual)
             return individual
 
+        elif "Mate" in message:
+            parents = [self._outstanding[parent] for parent in message["Mate"]]
+            if   len(parents) == 1: individual = parents[0].clone()
+            elif len(parents) == 2: individual = parents[0].mate(parents[1])
+            self.birth(individual)
+            return individual
+
         elif "Death" in message:
             individual = message["Death"]
             pop_name   = self._get_population(individual.get_population())
             populations[pop_name].death(individual)
             return individual
-
-        elif "Mate" in message:
-            return message["Mate"] # Already processed by poll()
 
         else:
             raise ValueError(f'unrecognized message "{message}"')

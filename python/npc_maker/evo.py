@@ -71,7 +71,7 @@ class Genome:
 
     def clone(self) -> 'Genome':
         """
-        Create an identical copy of this genome.
+        Asexually reproduce this genome.
         """
         return copy.deepcopy(self)
 
@@ -423,7 +423,7 @@ class Individual:
             other.children.append(child.name)
         return child
 
-    def save(self, path) -> Path:
+    def save(self, path=None) -> Path:
         """
         Serialize this individual to JSON and write it to a file.
 
@@ -431,6 +431,11 @@ class Individual:
 
         Returns the file path of the saved individual.
         """
+        if not path:
+            if self.path:
+                path = self.path.parent
+            else:
+                path = tempfile.gettempdir()
         path = Path(path)
         if not path.exists():
             path.mkdir()
@@ -874,8 +879,7 @@ class Overflowing(Population):
 
 class Evolution:
     """
-    Abstract class for implementing evolutionary algorithms
-    and other similar parameter optimization techniques.
+    Abstract class for implementing evolutionary algorithms.
 
     Both the spawn and death methods should be thread-safe.
     """
