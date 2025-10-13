@@ -247,7 +247,7 @@ class Individual:
         Get the environmental info dictionary.
 
         Returns a reference to the individual's internal "telemetry" dictionary,
-        modifications are permanent!
+        modifications are permanent.
         """
         return self.telemetry
 
@@ -256,7 +256,7 @@ class Individual:
         Get the epigenetic info dictionary.
 
         Returns a reference to the individual's internal "epigenome" dictionary,
-        modifications are permanent!
+        modifications are permanent.
         """
         return self.epigenome
 
@@ -518,7 +518,7 @@ class Individual:
 
 class Population:
     """
-    Base class for groups of individuals stored together in a directory.
+    Base class for groups of individuals. Stored together in a directory.
 
     This class manage individuals in a single population without replacement.
     Individuals are added but never removed. The population grows without bounds.
@@ -683,7 +683,7 @@ class Population:
 
     def get_leaderboard(self):
         """
-        Returns a list of individuals, sorted sorted descending by score,
+        Returns a list of individuals, sorted descending by score,
         so that leaderboard[0] is the best individual.
         """
         if self._leaderboard:

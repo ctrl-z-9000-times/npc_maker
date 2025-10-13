@@ -560,6 +560,8 @@ impl Environment {
         &self.outstanding
     }
 
+    /// Returns a reference to the environment's internal "outstanding"
+    /// dictionary, modifications are permanent.
     pub fn get_outstanding_mut(&mut self) -> &mut HashMap<String, evo::Individual> {
         &mut self.outstanding
     }
@@ -631,7 +633,6 @@ impl Environment {
         Ok(Some(message))
     }
 
-    /*
     /// Update the environment.
     ///
     /// Argument populations is a dict of evolution API instances, indexed by population name.
@@ -645,8 +646,8 @@ impl Environment {
                 self.birth(individual, &genome);
             }
             Message::Mate { parents } => {
-                let mother = self.outstanding.get_mut(&parents[0]).unwrap();
-                let father = self.outstanding.get_mut(&parents[1]).unwrap();
+                let _mother = self.outstanding.get_mut(&parents[0]).unwrap();
+                let _father = self.outstanding.get_mut(&parents[1]).unwrap();
                 // let individual = mother.mate(father);
                 // self.birth(individual);
                 todo!();
@@ -659,7 +660,6 @@ impl Environment {
         }
         Ok(())
     }
-    */
 
     /// Send an individual to the environment.
     ///
