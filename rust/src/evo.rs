@@ -5,8 +5,6 @@ use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-// TODO: Consider lazy loading the genome from file when its requested.
-
 fn uuid4() -> String {
     let rng = &mut rand::rng();
     let uuid = rng.random::<u128>();
@@ -156,7 +154,7 @@ impl Individual {
     /// ".indiv" file extension.
     ///
     /// Returns the file path of the saved individual.
-    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<PathBuf, std::io::Error> {
+    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<&Path, std::io::Error> {
         let mut path: PathBuf = path.as_ref().into();
         // Fill in default path.
         if path.to_str() == Some("") {
@@ -171,7 +169,7 @@ impl Individual {
         temp.push(format!("{}.indiv", self.name));
         path.push(format!("{}.indiv", self.name));
         //
-        let mut file = File::create(&temp)?;
+        let file = File::create(&temp)?;
         let mut buf = std::io::BufWriter::new(file);
         serde_json::to_writer(&mut buf, self).unwrap();
         buf.write_all(b"\0")?;
@@ -179,7 +177,8 @@ impl Individual {
         let file = buf.into_inner()?; // flush the buffer
         file.sync_all()?; // push to disk
         std::fs::rename(&temp, &path)?; // move file into place
-        Ok(path)
+        self.path = Some(path);
+        Ok(self.path.as_ref().unwrap())
     }
 
     /// Load a previously saved individual.
@@ -192,11 +191,72 @@ impl Individual {
     }
 }
 
-fn scan_dir(path: &Path) -> Result<Vec<Individual>, std::io::Error> {
+/// Individuals may have custom scores functions with this type signature.
+///
+/// By default the npc_maker will parse the individual's score into a single
+/// floating point number.
+pub type ScoreFn = Box<dyn Fn(&Individual) -> f64>;
+
+fn unwrap_score_fn(score_fn: Option<ScoreFn>) -> ScoreFn {
+    score_fn.unwrap_or(Box::new(|individual: &Individual| {
+        individual.score.parse().unwrap_or(f64::NEG_INFINITY)
+    }))
+}
+
+/// Handle to an Individual that is stored on file.
+///
+/// Stubs contain only the critical data for the evolutionary algorithm, and the
+/// file path where the rest of the individual's data is stored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stub {
+    pub path: PathBuf,
+    pub score: f64,
+    pub ascension: u64,
+}
+
+impl Stub {
+    pub fn new(path: impl AsRef<Path>, score_fn: Option<ScoreFn>) -> Result<Stub, std::io::Error> {
+        let path = path.as_ref();
+        let score_fn = unwrap_score_fn(score_fn);
+        let individual = Individual::load(path)?;
+        let score = score_fn(&individual);
+        Ok(Stub {
+            path: path.into(),
+            score,
+            ascension: individual.ascension.unwrap_or(u64::MAX),
+        })
+    }
+    pub fn load(&self) -> Result<Individual, std::io::Error> {
+        Individual::load(&self.path)
+    }
+    /// Argument path is a directory to copy this individual to.
+    /// Returns a handle to the new copy.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<Stub, std::io::Error> {
+        let path = path.as_ref();
+        if !path.exists() {
+            std::fs::create_dir(path)?;
+        }
+        let path = path.join(self.path.file_name().unwrap());
+        std::fs::copy(&self.path, &path)?;
+        Ok(Stub { path, ..*self })
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn score(&self) -> f64 {
+        self.score
+    }
+    pub fn ascension(&self) -> u64 {
+        self.ascension
+    }
+}
+
+/// Get the paths of all saved individuals in the directory.
+fn scan_dir(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     if !path.exists() {
         std::fs::create_dir(path)?;
     }
-    let mut contents = vec![];
+    let mut individuals = vec![];
     for file in path.read_dir()? {
         let file = file?;
         if !file.file_type()?.is_file() {
@@ -207,14 +267,11 @@ fn scan_dir(path: &Path) -> Result<Vec<Individual>, std::io::Error> {
             continue;
         };
         if file_name.ends_with(".indiv") {
-            let individual = Individual::load(file.path())?;
-            contents.push(individual);
+            individuals.push(file.path());
         }
     }
-    Ok(contents)
+    Ok(individuals)
 }
-
-pub type ScoreFn = Box<dyn Fn(&Individual) -> f64>;
 
 /// A group of individuals that are stored together in a directory.
 pub struct Population {
@@ -222,11 +279,11 @@ pub struct Population {
 
     replacement: Replacement,
 
-    population_size: u64,
+    population_size: usize,
 
-    leaderboard_size: u64,
+    leaderboard_size: usize,
 
-    hall_of_fame_size: u64,
+    hall_of_fame_size: usize,
 
     score_fn: ScoreFn,
 
@@ -234,13 +291,13 @@ pub struct Population {
 
     generation: u64,
 
-    members: Vec<Individual>,
+    members: Vec<Stub>,
 
-    waiting: Vec<Individual>,
+    waiting: Vec<Stub>,
 
-    leaderboard: Vec<Individual>,
+    leaderboard: Vec<Stub>,
 
-    hall_of_fame: Vec<Individual>,
+    hall_of_fame: Vec<Stub>,
 }
 
 /// Controls how a population replaces individuals once it's full.
@@ -263,7 +320,7 @@ pub enum Replacement {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Metadata {
+struct PopulationMetadata {
     ascension: u64,
     generation: u64,
 }
@@ -272,28 +329,24 @@ impl Population {
     pub fn new(
         path: impl AsRef<Path>,
         replacement: Replacement,
-        population_size: u64,
-        leaderboard_size: u64,
-        hall_of_fame_size: u64,
+        population_size: usize,
+        leaderboard_size: usize,
+        hall_of_fame_size: usize,
         score_fn: Option<ScoreFn>,
     ) -> Result<Self, std::io::Error> {
         let mut path: PathBuf = path.as_ref().into();
-        // Fill in default path with temp dir.
+        // Fill in empty path with temp dir.
         if path.to_str() == Some("") {
             path = std::env::temp_dir();
+            path.push(format!("pop{:x}", rand::random_range(0..u64::MAX)));
         }
-        //
-        let score_fn = score_fn.unwrap_or(Box::new(|individual: &Individual| {
-            individual.score.parse().unwrap_or(f64::NEG_INFINITY)
-        }));
-        //
         let mut this = Self {
             path,
             replacement,
             population_size,
             leaderboard_size,
             hall_of_fame_size,
-            score_fn,
+            score_fn: unwrap_score_fn(score_fn),
             ascension: 0,
             generation: 0,
             members: Default::default(),
@@ -301,14 +354,21 @@ impl Population {
             leaderboard: Default::default(),
             hall_of_fame: Default::default(),
         };
-        this.load_metadata()?;
-        this.load_members()?;
+        this.load()?;
         Ok(this)
+    }
+    fn load(&mut self) -> Result<(), std::io::Error> {
+        self.load_metadata()?;
+        self.load_members()?;
+        self.load_waiting()?;
+        self.load_leaderboard()?;
+        self.load_hall_of_fame()?;
+        Ok(())
     }
     fn load_metadata(&mut self) -> Result<(), std::io::Error> {
         let path = self.get_metadata_path();
         if path.exists() {
-            let metadata: Metadata = serde_json::from_slice(&std::fs::read(path)?).unwrap();
+            let metadata: PopulationMetadata = serde_json::from_slice(&std::fs::read(path)?).unwrap();
             self.ascension = metadata.ascension;
             self.generation = metadata.generation;
         }
@@ -316,29 +376,54 @@ impl Population {
     }
     fn save_metadata(&self) -> Result<(), std::io::Error> {
         let path = self.get_metadata_path();
-        let metadata = Metadata {
+        let metadata = PopulationMetadata {
             ascension: self.ascension,
             generation: self.generation,
         };
         std::fs::write(path, serde_json::to_string(&metadata).unwrap())?;
         Ok(())
     }
+    fn load_stubs(&self, path: &Path) -> Result<Vec<Stub>, std::io::Error> {
+        let contents = scan_dir(path)?;
+        let mut stubs = Vec::with_capacity(contents.len());
+        for path in contents {
+            let individual = Individual::load(&path)?;
+            stubs.push(Stub {
+                path,
+                score: (self.score_fn)(&individual),
+                ascension: individual.ascension.unwrap(),
+            })
+        }
+        Ok(stubs)
+    }
     fn load_members(&mut self) -> Result<(), std::io::Error> {
-        self.members = scan_dir(self.get_path())?;
-        self.waiting = scan_dir(&self.get_waiting_path())?;
-        let mut leaderboard = scan_dir(&self.get_leaderboard_path())?;
-        leaderboard.sort_by(|a, b| (self.score_fn)(a).total_cmp(&(self.score_fn)(b)));
-        self.leaderboard = leaderboard;
-        self.hall_of_fame = scan_dir(&self.get_hall_of_fame_path())?;
+        self.members = self.load_stubs(&self.get_members_path())?;
+        Ok(())
+    }
+    fn load_waiting(&mut self) -> Result<(), std::io::Error> {
+        self.waiting = self.load_stubs(&self.get_waiting_path())?;
+        Ok(())
+    }
+    fn load_leaderboard(&mut self) -> Result<(), std::io::Error> {
+        self.leaderboard = self.load_stubs(&self.get_leaderboard_path())?;
+        self.leaderboard.sort_by(|a, b| a.score.total_cmp(&b.score));
+        Ok(())
+    }
+    fn load_hall_of_fame(&mut self) -> Result<(), std::io::Error> {
+        self.hall_of_fame = self.load_stubs(&self.get_hall_of_fame_path())?;
         self.hall_of_fame.sort_by_key(|individual| individual.ascension);
         Ok(())
     }
-    /// Get the path argument orssssssssss a temporary directory.
+    /// Get the path argument or a temporary directory.
     pub fn get_path(&self) -> &Path {
         &self.path
     }
     fn get_metadata_path(&self) -> PathBuf {
         self.path.join("population.json")
+    }
+    /// Get the current population's directory.
+    fn get_members_path(&self) -> PathBuf {
+        self.path.join("members")
     }
     /// Get the waiting directory. Individuals are staged here until the next
     /// generation rollover.
@@ -362,92 +447,141 @@ impl Population {
         self.generation
     }
     /// Get the current members of the population.
-    pub fn get_members(&self) -> &[Individual] {
+    pub fn get_members(&self) -> &[Stub] {
         &self.members
     }
-    pub fn add(&mut self, individual: &mut Individual) -> Result<(), std::io::Error> {
-        individual.ascension = Some(self.ascension);
+    /// Get the highest scoring individuals ever recorded. This is sorted
+    /// descending by score, so that leaderboard[0] is the best individual.
+    pub fn get_leaderboard(&self) -> &[Stub] {
+        &self.leaderboard
+    }
+    /// Get the highest scoring individuals from each generation. This is sorted
+    /// by ascension, so that hall_of_fame[0] is the oldest.
+    pub fn get_hall_of_fame(&self) -> &[Stub] {
+        &self.hall_of_fame
+    }
+    /// Add a new individual to this population.
+    pub fn add(&mut self, mut individual: Individual) -> Result<(), std::io::Error> {
+        let ascension = self.ascension;
+        individual.ascension = Some(ascension);
         self.ascension += 1;
-        // Ignore individuals who die without a valid score.
-        let score = (self.score_fn)(individual);
-        if score.partial_cmp(&f64::NEG_INFINITY) != Some(std::cmp::Ordering::Greater) {
-            return Ok(());
-        }
         // Stage the individual in the waiting directory.
-        individual.save(self.get_waiting_path())?;
-        self.waiting.push(todo!());
-        //
-        match self.replacement {
-            Replacement::Unbounded => {
-                // individual.save(&self.path)?;
+        let score = (self.score_fn)(&individual);
+        self.waiting.push(Stub {
+            path: individual.save(self.get_waiting_path())?.into(),
+            score,
+            ascension,
+        });
+        // Make room in the current generation for a new member.
+        if self.members.len() >= self.population_size {
+            match self.replacement {
+                Replacement::Unbounded => {}
+                Replacement::Random => {
+                    let random_index = rand::random_range(0..self.members.len());
+                    self.members.swap_remove(random_index);
+                }
+                Replacement::Worst => {
+                    let (worst_index, _worst_individual) = self
+                        .members
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| a.1.score.total_cmp(&b.1.score))
+                        .unwrap();
+                    self.members.swap_remove(worst_index);
+                }
+                Replacement::Oldest => {
+                    let (oldest_index, _oldest_individual) = self
+                        .members
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_index, individual)| individual.ascension)
+                        .unwrap();
+                    self.members.swap_remove(oldest_index);
+                }
+                Replacement::Generation => {}
             }
-            Replacement::Random => {}
-            Replacement::Worst => {}
-            Replacement::Oldest => {}
+        }
+        // Save directly to the current generation.
+        match self.replacement {
+            Replacement::Unbounded | Replacement::Random | Replacement::Worst | Replacement::Oldest => {
+                self.members.push(Stub {
+                    path: individual.save(self.get_members_path())?.into(),
+                    score,
+                    ascension,
+                });
+            }
             Replacement::Generation => {}
         }
-
+        // Cycle the next generation into place, and update bookkeeping.
+        if self.waiting.len() >= self.population_size {
+            self.rollover().unwrap();
+        }
         Ok(())
     }
-    fn rollover(&mut self) {
-        self.rollover_leaderboard();
-        self.rollover_hall_of_fame();
-        self.rollover_waiting();
+    fn rollover(&mut self) -> Result<(), std::io::Error> {
+        self.rollover_leaderboard()?;
+        self.rollover_hall_of_fame()?;
+        self.rollover_generation()?;
+        Ok(())
     }
-    fn rollover_leaderboard(&mut self) {
+    fn rollover_leaderboard(&mut self) -> Result<(), std::io::Error> {
         let leaderboard_path = self.get_leaderboard_path();
         // Sort together the existing leaderboard and the new contenders.
-        let mut competition = Vec::with_capacity(self.leaderboard.len() + self.waiting.len());
-        for individual in &self.leaderboard {
-            competition.push((self.score(individual), true, &individual.path));
-        }
-        for individual in &self.waiting {
-            competition.push((self.score(individual), false, &individual.path));
-        }
-        competition.sort_by(|a, b| a.0.total_cmp(&b.0));
+        self.leaderboard.reserve(self.waiting.len());
+        self.leaderboard.extend_from_slice(&self.waiting);
+        self.leaderboard.sort_by(|a, b| a.score.total_cmp(&b.score));
         // Move new winners to the leaderboard directory.
-        for (score, in_place, path) in &competition[..self.leaderboard_size as usize] {
-            if !in_place {}
+        for individual in &mut self.leaderboard[..self.leaderboard_size] {
+            if !individual.path.starts_with(&leaderboard_path) {
+                *individual = individual.save(&leaderboard_path)?;
+            }
         }
-
-        // Add the new generation to the leaderboard.
-        // self.leaderboard.extend(&self.waiting);
-
-        // std::fs::copy();
-        // in_leaderboard = lambda path: path and path.is_relative_to(leaderboard_path)
-        // self._sort_by_score(self._leaderboard_data)
-        // # Discard low performing individuals.
-        // while len(self._leaderboard_data) > self._leaderboard:
-        //     individual = self._leaderboard_data.pop()
-        //     if in_leaderboard(individual.path):
-        //         individual.path.unlink()
-        // # Ensure all remaining individuals are saved to the leaderboard directory.
-        // for individual in self._leaderboard_data:
-        //     if not in_leaderboard(individual.path):
-        //         individual.path = _copy_file(individual.path, leaderboard_path)
+        // Remove low performing individuals from the leaderboard directory.
+        for individual in self.leaderboard.drain(self.leaderboard_size..) {
+            if individual.path.starts_with(&leaderboard_path) {
+                std::fs::remove_file(&individual.path)?;
+            }
+        }
+        Ok(())
     }
-    fn rollover_hall_of_fame(&mut self) {
-        //
-        self.waiting
-            .sort_by(|a, b| self.score(a).total_cmp(&self.score(b)).reverse());
-
-        let winners = &mut self.waiting[..self.hall_of_fame_size as usize];
-        winners.sort_unstable_by_key(|individual| individual.ascension);
-
+    fn rollover_hall_of_fame(&mut self) -> Result<(), std::io::Error> {
         let hall_of_fame_path = self.get_hall_of_fame_path();
-
+        // Find the highest scoring individuals in the new generation.
+        self.waiting.sort_by(|a, b| a.score.total_cmp(&b.score).reverse());
+        let winners = &mut self.waiting[..self.hall_of_fame_size];
+        winners.sort_unstable_by_key(|individual| individual.ascension);
         for individual in winners {
-            // std::fs::copy(&individual.path, hall_of_fame_path).unwrap();
-            // let individual = Individual::load(path).unwrap();
-            // self.hall_of_fame.push(individual);
+            self.hall_of_fame.push(individual.save(&hall_of_fame_path)?);
         }
+        Ok(())
     }
-    fn rollover_waiting(&mut self) {
+    fn rollover_generation(&mut self) -> Result<(), std::io::Error> {
         self.generation += 1;
-        for individual in self.waiting.drain(..) {
-            let path = individual.path.unwrap();
-            std::fs::remove_file(path).unwrap();
+        if self.replacement == Replacement::Generation {
+            // Swap the waiting and members directories.
+            let members_path = self.get_members_path();
+            let waiting_path = self.get_waiting_path();
+            let swap_path = self.get_path().join(".swap");
+            std::fs::rename(&members_path, &swap_path)?;
+            std::fs::rename(&waiting_path, &members_path)?;
+            std::fs::rename(&swap_path, &waiting_path)?;
+            self.save_metadata()?;
+            // Swap the old and new generations and update their stubs.
+            std::mem::swap(&mut self.members, &mut self.waiting);
+            for individual in &mut self.members {
+                individual.path = members_path.join(individual.path.file_name().unwrap());
+            }
+            for individual in &mut self.waiting {
+                individual.path = waiting_path.join(individual.path.file_name().unwrap());
+            }
+        } else {
+            self.save_metadata()?;
         }
+        // Discard the old generation.
+        for individual in self.waiting.drain(..) {
+            std::fs::remove_file(individual.path)?;
+        }
+        Ok(())
     }
 }
 
