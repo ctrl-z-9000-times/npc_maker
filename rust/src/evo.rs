@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+
+// TODO: Put individual.genome in a OnceLock?
 
 fn uuid4() -> String {
     let rng = &mut rand::rng();
@@ -11,6 +14,31 @@ fn uuid4() -> String {
     format!("{uuid:032X}")
 }
 
+/// Callback for asexually reproducing a genome.
+///
+/// Returns a pair of (genome, phenome)
+pub type CloneGenome = dyn Fn(&[u8]) -> (Box<[u8]>, Box<[u8]>);
+
+/// Callback for sexually reproducing two genomes.
+///
+/// Returns a pair of (genome, phenome)
+pub type MateGenomes = dyn Fn(&[u8], &[u8]) -> (Box<[u8]>, Box<[u8]>);
+
+/// Individuals may have custom scores functions with this type signature.
+///
+/// By default the npc_maker will parse the individual's score into a single
+/// floating point number.
+pub type ScoreFn = dyn Fn(&Individual) -> f64;
+
+fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Individual) -> f64 {
+    if let Some(score_fn) = score_fn {
+        score_fn(individual)
+    } else {
+        individual.score.parse().unwrap_or(f64::NEG_INFINITY)
+    }
+}
+
+/// Container for a distinct life-form and all of its associated data.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Individual {
     /// Name or UUID of this individual.
@@ -74,14 +102,14 @@ pub struct Individual {
 
 impl Individual {
     /// Create a new individual.
-    pub fn new(environment: String, population: String, controller: Vec<String>, genome: Box<[u8]>) -> Self {
+    pub fn new(environment: &str, population: &str, controller: &[&str], genome: Box<[u8]>) -> Self {
         Self {
             name: uuid4(),
             ascension: None,
-            environment,
-            population,
+            environment: environment.to_string(),
+            population: population.to_string(),
             species: uuid4(),
-            controller,
+            controller: controller.iter().map(|arg| arg.to_string()).collect(),
             genome,
             telemetry: HashMap::new(),
             epigenome: HashMap::new(),
@@ -97,7 +125,8 @@ impl Individual {
     }
 
     /// Asexually reproduce an individual.
-    pub fn asex(&mut self, clone_genome: impl FnOnce(&[u8]) -> Box<[u8]>) -> Self {
+    pub fn asex(&mut self, clone_genome: &CloneGenome) -> (Self, Box<[u8]>) {
+        let (genome, phenome) = clone_genome(&self.genome);
         let individual = Self {
             name: uuid4(),
             ascension: None,
@@ -105,7 +134,7 @@ impl Individual {
             population: self.population.clone(),
             species: self.species.clone(),
             controller: self.controller.clone(),
-            genome: clone_genome(&self.genome),
+            genome,
             telemetry: HashMap::new(),
             epigenome: HashMap::new(),
             score: String::new(),
@@ -118,11 +147,12 @@ impl Individual {
             path: None,
         };
         self.children.push(individual.name.clone());
-        individual
+        (individual, phenome)
     }
 
     /// Sexually reproduce two individuals.
-    pub fn sex(&mut self, other: &mut Self, mate_genomes: impl FnOnce(&[u8], &[u8]) -> Box<[u8]>) -> Self {
+    pub fn sex(&mut self, other: &mut Self, mate_genomes: &MateGenomes) -> (Self, Box<[u8]>) {
+        let (genome, phenome) = mate_genomes(&self.genome, &other.genome);
         let individual = Self {
             name: uuid4(),
             ascension: None,
@@ -130,7 +160,7 @@ impl Individual {
             population: self.population.clone(),
             species: self.species.clone(),
             controller: self.controller.clone(),
-            genome: mate_genomes(&self.genome, &other.genome),
+            genome,
             telemetry: HashMap::new(),
             epigenome: HashMap::new(),
             score: String::new(),
@@ -144,7 +174,7 @@ impl Individual {
         };
         self.children.push(individual.name.clone());
         other.children.push(individual.name.clone());
-        individual
+        (individual, phenome)
     }
 
     /// Save an individual to a file.
@@ -158,7 +188,11 @@ impl Individual {
         let mut path: PathBuf = path.as_ref().into();
         // Fill in default path.
         if path.to_str() == Some("") {
-            path = std::env::temp_dir();
+            if let Some(save_file) = self.path.as_ref() {
+                path = save_file.parent().unwrap().into();
+            } else {
+                path = std::env::temp_dir();
+            }
         }
         // Make the directory in case this is the first individual to be saved to it.
         if !path.exists() {
@@ -187,67 +221,8 @@ impl Individual {
         let sentinel = file.iter().position(|byte| *byte == b'\0').unwrap_or(file.len());
         let mut individual: Individual = serde_json::from_slice(&file[..sentinel])?;
         individual.genome = file[sentinel + 1..].into();
+        individual.path = Some(path.as_ref().into());
         Ok(individual)
-    }
-}
-
-/// Individuals may have custom scores functions with this type signature.
-///
-/// By default the npc_maker will parse the individual's score into a single
-/// floating point number.
-pub type ScoreFn = Box<dyn Fn(&Individual) -> f64>;
-
-fn unwrap_score_fn(score_fn: Option<ScoreFn>) -> ScoreFn {
-    score_fn.unwrap_or(Box::new(|individual: &Individual| {
-        individual.score.parse().unwrap_or(f64::NEG_INFINITY)
-    }))
-}
-
-/// Handle to an Individual that is stored on file.
-///
-/// Stubs contain only the critical data for the evolutionary algorithm, and the
-/// file path where the rest of the individual's data is stored.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Stub {
-    pub path: PathBuf,
-    pub score: f64,
-    pub ascension: u64,
-}
-
-impl Stub {
-    pub fn new(path: impl AsRef<Path>, score_fn: Option<ScoreFn>) -> Result<Stub, std::io::Error> {
-        let path = path.as_ref();
-        let score_fn = unwrap_score_fn(score_fn);
-        let individual = Individual::load(path)?;
-        let score = score_fn(&individual);
-        Ok(Stub {
-            path: path.into(),
-            score,
-            ascension: individual.ascension.unwrap_or(u64::MAX),
-        })
-    }
-    pub fn load(&self) -> Result<Individual, std::io::Error> {
-        Individual::load(&self.path)
-    }
-    /// Argument path is a directory to copy this individual to.
-    /// Returns a handle to the new copy.
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<Stub, std::io::Error> {
-        let path = path.as_ref();
-        if !path.exists() {
-            std::fs::create_dir(path)?;
-        }
-        let path = path.join(self.path.file_name().unwrap());
-        std::fs::copy(&self.path, &path)?;
-        Ok(Stub { path, ..*self })
-    }
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-    pub fn score(&self) -> f64 {
-        self.score
-    }
-    pub fn ascension(&self) -> u64 {
-        self.ascension
     }
 }
 
@@ -273,6 +248,91 @@ fn scan_dir(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     Ok(individuals)
 }
 
+/// Handle to an Individual that is stored on file.
+///
+/// Stubs contain only the critical data for the evolutionary algorithm, and the
+/// path to the file where the rest of the individual's data is stored.
+#[derive(Debug, Clone)]
+pub struct Stub {
+    path: PathBuf,
+    score: f64,
+    ascension: u64,
+    cache: OnceLock<Arc<Mutex<Individual>>>,
+}
+
+impl Stub {
+    pub fn from_dir(
+        path: impl AsRef<Path>,
+        score_fn: Option<&ScoreFn>,
+        cache: bool,
+    ) -> Result<Vec<Stub>, std::io::Error> {
+        let individuals = scan_dir(path.as_ref())?;
+        let mut stubs = Vec::with_capacity(individuals.len());
+        for path in individuals {
+            stubs.push(Stub::from_path(path, score_fn, cache)?);
+        }
+        Ok(stubs)
+    }
+    pub fn from_path(path: impl AsRef<Path>, score_fn: Option<&ScoreFn>, cache: bool) -> Result<Stub, std::io::Error> {
+        Self::from_individual(Individual::load(path)?, score_fn, cache)
+    }
+    pub fn from_individual(
+        individual: Individual,
+        score_fn: Option<&ScoreFn>,
+        cache: bool,
+    ) -> Result<Stub, std::io::Error> {
+        let path = individual.path.clone().unwrap();
+        let score = call_score_fn(score_fn, &individual);
+        let ascension = individual.ascension.unwrap_or(u64::MAX);
+        let cache = if cache {
+            OnceLock::from(Arc::new(Mutex::new(individual)))
+        } else {
+            OnceLock::new()
+        };
+        Ok(Stub {
+            path,
+            score,
+            ascension,
+            cache,
+        })
+    }
+    /// Save this individual to a new directory.
+    ///
+    /// Argument path is a directory to copy this individual to.
+    /// Returns a handle to the new copy.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<Stub, std::io::Error> {
+        let path = path.as_ref();
+        if !path.exists() {
+            std::fs::create_dir(path)?;
+        }
+        let path = path.join(self.path.file_name().unwrap());
+        std::fs::copy(&self.path, &path)?;
+        let cache = self.cache.get().map(|x| OnceLock::from(x.clone())).unwrap_or_default();
+        Ok(Stub { path, cache, ..*self })
+    }
+    /// Get the individual that this stub represents.
+    pub fn load(&self) -> Result<Arc<Mutex<Individual>>, std::io::Error> {
+        if let Some(value) = self.cache.get() {
+            return Ok(value.clone());
+        }
+        let individual = Individual::load(&self.path)?;
+        Ok(self.cache.get_or_init(|| Arc::new(Mutex::new(individual))).clone())
+    }
+    /// Discard any cached individual data from this stub.
+    pub fn unload(&mut self) {
+        self.cache.take();
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn score(&self) -> f64 {
+        self.score
+    }
+    pub fn ascension(&self) -> u64 {
+        self.ascension
+    }
+}
+
 /// A group of individuals that are stored together in a directory.
 pub struct Population {
     path: PathBuf,
@@ -285,7 +345,7 @@ pub struct Population {
 
     hall_of_fame_size: usize,
 
-    score_fn: ScoreFn,
+    score_fn: Option<Box<ScoreFn>>,
 
     ascension: u64,
 
@@ -332,13 +392,14 @@ impl Population {
         population_size: usize,
         leaderboard_size: usize,
         hall_of_fame_size: usize,
-        score_fn: Option<ScoreFn>,
+        score_fn: Option<Box<ScoreFn>>,
     ) -> Result<Self, std::io::Error> {
         let mut path: PathBuf = path.as_ref().into();
         // Fill in empty path with temp dir.
         if path.to_str() == Some("") {
             path = std::env::temp_dir();
             path.push(format!("pop{:x}", rand::random_range(0..u64::MAX)));
+            std::fs::create_dir(&path)?;
         }
         let mut this = Self {
             path,
@@ -346,7 +407,7 @@ impl Population {
             population_size,
             leaderboard_size,
             hall_of_fame_size,
-            score_fn: unwrap_score_fn(score_fn),
+            score_fn,
             ascension: 0,
             generation: 0,
             members: Default::default(),
@@ -359,10 +420,7 @@ impl Population {
     }
     fn load(&mut self) -> Result<(), std::io::Error> {
         self.load_metadata()?;
-        self.load_members()?;
-        self.load_waiting()?;
-        self.load_leaderboard()?;
-        self.load_hall_of_fame()?;
+        self.load_stubs()?;
         Ok(())
     }
     fn load_metadata(&mut self) -> Result<(), std::io::Error> {
@@ -383,40 +441,27 @@ impl Population {
         std::fs::write(path, serde_json::to_string(&metadata).unwrap())?;
         Ok(())
     }
-    fn load_stubs(&self, path: &Path) -> Result<Vec<Stub>, std::io::Error> {
-        let contents = scan_dir(path)?;
-        let mut stubs = Vec::with_capacity(contents.len());
-        for path in contents {
-            let individual = Individual::load(&path)?;
-            stubs.push(Stub {
-                path,
-                score: (self.score_fn)(&individual),
-                ascension: individual.ascension.unwrap(),
-            })
-        }
-        Ok(stubs)
-    }
-    fn load_members(&mut self) -> Result<(), std::io::Error> {
-        self.members = self.load_stubs(&self.get_members_path())?;
-        Ok(())
-    }
-    fn load_waiting(&mut self) -> Result<(), std::io::Error> {
-        self.waiting = self.load_stubs(&self.get_waiting_path())?;
-        Ok(())
-    }
-    fn load_leaderboard(&mut self) -> Result<(), std::io::Error> {
-        self.leaderboard = self.load_stubs(&self.get_leaderboard_path())?;
+    fn load_stubs(&mut self) -> Result<(), std::io::Error> {
+        let score_fn = self.score_fn.as_deref();
+        self.members = Stub::from_dir(self.get_members_path(), score_fn, false)?;
+        self.waiting = Stub::from_dir(self.get_waiting_path(), score_fn, false)?;
+        self.leaderboard = Stub::from_dir(self.get_leaderboard_path(), score_fn, false)?;
+        self.hall_of_fame = Stub::from_dir(self.get_hall_of_fame_path(), score_fn, false)?;
         self.leaderboard.sort_by(|a, b| a.score.total_cmp(&b.score));
-        Ok(())
-    }
-    fn load_hall_of_fame(&mut self) -> Result<(), std::io::Error> {
-        self.hall_of_fame = self.load_stubs(&self.get_hall_of_fame_path())?;
-        self.hall_of_fame.sort_by_key(|individual| individual.ascension);
+        self.hall_of_fame.sort_by_key(|stub| stub.ascension);
         Ok(())
     }
     /// Get the path argument or a temporary directory.
     pub fn get_path(&self) -> &Path {
         &self.path
+    }
+    /// Get the replacement argument.
+    pub fn get_replacement(&self) -> Replacement {
+        self.replacement
+    }
+    /// Get the population_size argument.
+    pub fn get_population_size(&self) -> usize {
+        self.population_size
     }
     fn get_metadata_path(&self) -> PathBuf {
         self.path.join("population.json")
@@ -451,12 +496,12 @@ impl Population {
         &self.members
     }
     /// Get the highest scoring individuals ever recorded. This is sorted
-    /// descending by score, so that leaderboard[0] is the best individual.
+    /// descending by score, so that leaderboard\[0\] is the best individual.
     pub fn get_leaderboard(&self) -> &[Stub] {
         &self.leaderboard
     }
     /// Get the highest scoring individuals from each generation. This is sorted
-    /// by ascension, so that hall_of_fame[0] is the oldest.
+    /// by ascension, so that hall_of_fame\[0\] is the oldest.
     pub fn get_hall_of_fame(&self) -> &[Stub] {
         &self.hall_of_fame
     }
@@ -465,22 +510,26 @@ impl Population {
         let ascension = self.ascension;
         individual.ascension = Some(ascension);
         self.ascension += 1;
-        // Stage the individual in the waiting directory.
-        let score = (self.score_fn)(&individual);
-        self.waiting.push(Stub {
-            path: individual.save(self.get_waiting_path())?.into(),
-            score,
-            ascension,
-        });
-        // Make room in the current generation for a new member.
-        if self.members.len() >= self.population_size {
-            match self.replacement {
-                Replacement::Unbounded => {}
-                Replacement::Random => {
+        // Always stage the individual in the waiting directory.
+        individual.save(self.get_waiting_path())?;
+        let score_fn = self.score_fn.as_deref();
+        let stub = Stub::from_individual(individual, score_fn, false)?;
+        self.waiting.push(stub.clone());
+        // Save the individual into the current generation too.
+        match self.replacement {
+            Replacement::Unbounded => {
+                self.members.push(stub.save(self.get_members_path())?);
+            }
+            Replacement::Random => {
+                // First make room in the current generation for a new member.
+                while self.members.len() >= self.population_size {
                     let random_index = rand::random_range(0..self.members.len());
                     self.members.swap_remove(random_index);
                 }
-                Replacement::Worst => {
+                self.members.push(stub.save(self.get_members_path())?);
+            }
+            Replacement::Worst => {
+                while self.members.len() >= self.population_size {
                     let (worst_index, _worst_individual) = self
                         .members
                         .iter()
@@ -489,7 +538,10 @@ impl Population {
                         .unwrap();
                     self.members.swap_remove(worst_index);
                 }
-                Replacement::Oldest => {
+                self.members.push(stub.save(self.get_members_path())?);
+            }
+            Replacement::Oldest => {
+                while self.members.len() >= self.population_size {
                     let (oldest_index, _oldest_individual) = self
                         .members
                         .iter()
@@ -498,23 +550,13 @@ impl Population {
                         .unwrap();
                     self.members.swap_remove(oldest_index);
                 }
-                Replacement::Generation => {}
+                self.members.push(stub.save(self.get_members_path())?);
             }
-        }
-        // Save directly to the current generation.
-        match self.replacement {
-            Replacement::Unbounded | Replacement::Random | Replacement::Worst | Replacement::Oldest => {
-                self.members.push(Stub {
-                    path: individual.save(self.get_members_path())?.into(),
-                    score,
-                    ascension,
-                });
-            }
-            Replacement::Generation => {}
+            Replacement::Generation => {} // Does not save to the current generation.
         }
         // Cycle the next generation into place, and update bookkeeping.
         if self.waiting.len() >= self.population_size {
-            self.rollover().unwrap();
+            self.rollover()?;
         }
         Ok(())
     }
@@ -719,15 +761,33 @@ mod tests {
     }
     #[test]
     fn indiv_save_load() {
-        let mut indiv1 = Individual::new(
-            "foo".into(),
-            "bar".into(),
-            vec!["ctrl".into(), "prog".into()],
-            Box::new(*b"beepboop"),
-        );
+        let mut indiv1 = Individual::new("foo", "bar", &["ctrl", "prog"], Box::new(*b"beepboop"));
         indiv1.other.insert("X".into(), "Y".into());
         let path = indiv1.save(std::env::temp_dir()).unwrap();
         let indiv2 = Individual::load(path).unwrap();
         assert_eq!(indiv1, indiv2);
+    }
+    #[test]
+    fn pop_save_load() {
+        let mut pop1 = Population::new("", Replacement::Unbounded, 10, 3, 1, None).unwrap();
+
+        for _ in 0..30 {
+            let indiv = Individual::new("foo", "bar", &["ctrl", "prog"], Box::new(*b"beepboop"));
+            pop1.add(indiv).unwrap();
+        }
+        dbg!(pop1.get_members());
+        pop1.save_metadata().unwrap();
+        let pop2 = Population::new(pop1.get_path(), Replacement::Unbounded, 10, 3, 1, None).unwrap();
+        assert_eq!(pop1.get_path(), pop2.get_path());
+        assert_eq!(pop1.get_ascension(), pop2.get_ascension());
+        assert_eq!(pop1.get_generation(), pop2.get_generation());
+        fn stub_cmp(stubs: &[Stub]) -> Vec<PathBuf> {
+            let mut stubs = stubs.iter().map(|stub| stub.path.clone()).collect::<Vec<PathBuf>>();
+            stubs.sort();
+            stubs
+        }
+        assert_eq!(stub_cmp(pop1.get_members()), stub_cmp(pop2.get_members()));
+        assert_eq!(stub_cmp(pop1.get_leaderboard()), stub_cmp(pop2.get_leaderboard()));
+        assert_eq!(stub_cmp(pop1.get_hall_of_fame()), stub_cmp(pop2.get_hall_of_fame()));
     }
 }
