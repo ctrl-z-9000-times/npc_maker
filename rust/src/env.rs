@@ -616,7 +616,7 @@ impl Environment {
         // Process the message if able.
         if let Message::Score { name, value } = &mut message {
             let individual = self.outstanding.get_mut(name).unwrap();
-            individual.score = std::mem::take(value);
+            individual.score = Some(std::mem::take(value));
             return Ok(None); // consume the message
         }
         if let Message::Telemetry { name, info } = &mut message {

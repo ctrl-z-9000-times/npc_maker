@@ -410,6 +410,7 @@ pub trait API {
     /// Receive an array of bytes from the environment into the controller.
     ///
     /// Optional, panics by default.
+    #[allow(clippy::boxed_local)]
     fn set_binary(&mut self, gin: u64, value: Box<[u8]>) {
         panic!("unsupported operation: set_binary")
     }
@@ -427,6 +428,7 @@ pub trait API {
     /// Load the state of a controller from file.
     ///
     /// Optional, panics by default.
+    #[allow(clippy::boxed_local)]
     fn load(&mut self, save_state: Box<[u8]>) {
         panic!("unsupported operation: load")
     }

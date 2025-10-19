@@ -131,7 +131,7 @@ class Individual:
                 generation=0,
                 ascension=None,
                 path=None,
-                **other):
+                **extra):
         self.name           = str(name)         if name is not None else str(uuid.uuid4())
         self.environment    = str(environment)  if environment is not None else None
         self.population     = str(population)   if population is not None else None
@@ -148,7 +148,7 @@ class Individual:
         self.death_date     = str(death_date)   if death_date is not None else None
         self.generation     = int(generation)
         self.ascension      = int(ascension)    if ascension is not None else None
-        self.other          = other
+        self.extra          = extra
         self.path           = Path(path)        if path is not None else None
         # assert isinstance(genome, Genome) or isinstance(genome, bytes) or genome is None, f"expected Genome instance, found {type(genome).__name__}"
         assert genome is not None or self.path is not None
@@ -307,14 +307,14 @@ class Individual:
         """
         return self.ascension
 
-    def get_other(self) -> dict:
+    def get_extra(self) -> dict:
         """
-        Get any unrecognized fields that were found in the individual's JSON object.
+        Get all custom / unofficial fields that are saved with the individual.
 
         Returns a reference to this individual's internal data.
         Changes made to the returned value will persist with the individual.
         """
-        return self.other
+        return self.extra
 
     def get_path(self) -> Path:
         """
@@ -447,7 +447,7 @@ class Individual:
             genome = genome.save()
         assert isinstance(genome, bytes)
         # Unofficial fields, in case of conflict these take lower precedence.
-        data = dict(self.other)
+        data = dict(self.extra)
         # Required fields.
         data["telemetry"]   = self.telemetry
         data["epigenome"]   = self.epigenome
