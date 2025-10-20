@@ -29,11 +29,11 @@ fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// An instance of a control system.
+/// Interface for executing controller programs.
 ///
-/// This object provides methods for using a controller.
+/// This object runs an instance of a controller and provides methods for using it.
 ///
-/// This object's destruction triggers the controller to terminate.
+/// This object's destruction causes the controller to terminate.
 #[derive(Debug)]
 pub struct Controller {
     environment: PathBuf,

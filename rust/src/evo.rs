@@ -1,54 +1,16 @@
 //! Evolutionary algorithms and supporting tools.
 
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{BufRead, BufReader, BufWriter, Error, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Generate a universally unique name. This will never return the same name twice.
 fn uuid4() -> String {
-    let rng = &mut rand::rng();
-    let uuid = rng.random::<u128>();
+    let uuid: u128 = rand::random();
     format!("{uuid:032X}")
-}
-
-/// Callback for asexually reproducing a genome.
-///
-/// Returns a pair of (genome, phenome)
-pub type CloneGenome = dyn Fn(&[u8]) -> (Box<[u8]>, Box<[u8]>);
-
-/// Callback for sexually reproducing two genomes.
-///
-/// Returns a pair of (genome, phenome)
-pub type MateGenomes = dyn Fn(&[u8], &[u8]) -> (Box<[u8]>, Box<[u8]>);
-
-/// Individuals may have custom scores functions with this type signature.
-///
-/// By default the npc_maker will parse the individual's score into a single
-/// floating point number.
-pub type ScoreFn = dyn Fn(&Individual) -> f64;
-
-const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
-
-fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Individual) -> f64 {
-    if let Some(score_fn) = score_fn {
-        score_fn(individual)
-    } else if let Some(score) = &individual.score {
-        score.parse().unwrap_or(DEFAULT_SCORE)
-    } else {
-        DEFAULT_SCORE
-    }
-}
-
-fn compare_scores(score_fn: Option<&ScoreFn>) -> impl Fn(&Individual, &Individual) -> std::cmp::Ordering {
-    move |a, b| {
-        let a_score = call_score_fn(score_fn, a);
-        let b_score = call_score_fn(score_fn, b);
-        a_score.total_cmp(&b_score)
-    }
 }
 
 /// Container for a distinct life-form and all of its associated data.
@@ -156,10 +118,7 @@ impl Individual {
     }
 
     /// Asexually reproduce an individual.
-    ///
-    /// Returns a pair of (individual, phenome)
-    pub fn asex(&mut self, clone_genome: &CloneGenome) -> (Individual, Box<[u8]>) {
-        let (genome, phenome) = clone_genome(&self.genome());
+    pub fn asex(&mut self, child_genome: &[u8]) -> Individual {
         let individual = Individual {
             name: uuid4(),
             ascension: None,
@@ -167,7 +126,7 @@ impl Individual {
             population: self.population.clone(),
             species: self.species.clone(),
             controller: self.controller.clone(),
-            genome: OnceLock::from(Arc::from(genome)),
+            genome: OnceLock::from(Arc::from(child_genome)),
             telemetry: HashMap::new(),
             epigenome: HashMap::new(),
             score: None,
@@ -180,14 +139,11 @@ impl Individual {
             path: None,
         };
         self.children.push(individual.name.clone());
-        (individual, phenome)
+        individual
     }
 
     /// Sexually reproduce two individuals.
-    ///
-    /// Returns a pair of (individual, phenome)
-    pub fn sex(&mut self, other: &mut Individual, mate_genomes: &MateGenomes) -> (Individual, Box<[u8]>) {
-        let (genome, phenome) = mate_genomes(&self.genome(), &other.genome());
+    pub fn sex(&mut self, other: &mut Individual, child_genome: &[u8]) -> Individual {
         let individual = Individual {
             name: uuid4(),
             ascension: None,
@@ -195,7 +151,7 @@ impl Individual {
             population: self.population.clone(),
             species: self.species.clone(),
             controller: self.controller.clone(),
-            genome: OnceLock::from(Arc::from(genome)),
+            genome: OnceLock::from(Arc::from(child_genome)),
             telemetry: HashMap::new(),
             epigenome: HashMap::new(),
             score: None,
@@ -209,7 +165,7 @@ impl Individual {
         };
         self.children.push(individual.name.clone());
         other.children.push(individual.name.clone());
-        (individual, phenome)
+        individual
     }
 
     fn file_name(&self) -> String {
@@ -223,7 +179,7 @@ impl Individual {
     /// ".indiv" file extension.
     ///
     /// Returns the file path of the saved individual.
-    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<&Path, std::io::Error> {
+    pub fn save(&mut self, path: impl AsRef<Path>) -> Result<&Path, Error> {
         let mut path: PathBuf = path.as_ref().into();
         // Fill in default path.
         if path.to_str() == Some("") {
@@ -261,7 +217,7 @@ impl Individual {
     ///
     /// Returns the new individual, which is equal to the input individual
     /// except that it is saved to a new file and its genome is not loaded.
-    pub fn save_clone(&self, path: impl AsRef<Path>) -> Result<Individual, std::io::Error> {
+    pub fn save_clone(&self, path: impl AsRef<Path>) -> Result<Individual, Error> {
         self.genome(); // Load the genome into memory before the Arc gets cloned.
         let mut clone = self.clone();
         clone.save(path)?;
@@ -270,7 +226,7 @@ impl Individual {
     }
 
     /// Safety: ensure that this individual's save file is up to date.
-    unsafe fn copy_clone(&self, path: impl AsRef<Path>) -> Result<Individual, std::io::Error> {
+    unsafe fn copy_clone(&self, path: impl AsRef<Path>) -> Result<Individual, Error> {
         let old_path = self.path.as_ref().unwrap();
         let new_path = path.as_ref().join(self.file_name());
         std::fs::copy(old_path, &new_path)?;
@@ -280,7 +236,7 @@ impl Individual {
     }
 
     /// Load a previously saved individual.
-    pub fn load(path: impl AsRef<Path>) -> Result<Individual, std::io::Error> {
+    pub fn load(path: impl AsRef<Path>) -> Result<Individual, Error> {
         let path = path.as_ref().to_path_buf();
         let mut file = BufReader::new(File::open(&path)?);
         let mut text = vec![];
@@ -292,7 +248,7 @@ impl Individual {
     }
 
     /// Get all individuals saved in a directory.
-    pub fn load_dir(path: impl AsRef<Path>) -> Result<Vec<Individual>, std::io::Error> {
+    pub fn load_dir(path: impl AsRef<Path>) -> Result<Vec<Individual>, Error> {
         let path = path.as_ref();
         if !path.exists() {
             return Ok(vec![]);
@@ -315,15 +271,46 @@ impl Individual {
     }
 
     /// Delete this individual and its associated save file.
-    pub fn remove(self) -> Result<(), std::io::Error> {
-        if let Some(path) = self.path.as_ref() {
+    pub fn remove(self) -> Result<(), Error> {
+        if let Some(path) = self.path {
             std::fs::remove_file(path)?;
         }
         Ok(())
     }
 }
 
-/// A group of individuals that are stored together in a directory.
+/// Individuals may have custom scores functions with this type signature.
+///
+/// By default the npc_maker will parse the individual's score into a single
+/// floating point number, with a default of -inf for missing or invalid scores.
+pub type ScoreFn = dyn Fn(&Individual) -> f64;
+
+const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
+
+fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Individual) -> f64 {
+    if let Some(score_fn) = score_fn {
+        score_fn(individual)
+    } else if let Some(score) = &individual.score {
+        score.parse().unwrap_or(DEFAULT_SCORE)
+    } else {
+        DEFAULT_SCORE
+    }
+}
+
+fn compare_scores(score_fn: Option<&ScoreFn>) -> impl Fn(&Individual, &Individual) -> std::cmp::Ordering {
+    move |a, b| {
+        let a_score = call_score_fn(score_fn, a);
+        let b_score = call_score_fn(score_fn, b);
+        a_score.total_cmp(&b_score)
+    }
+}
+
+/// A group of individuals.
+///
+/// This manages an evolving population of individuals, featuring:
+/// * Serveral strategies for replacing individuals with new ones,
+/// * Persistant populations that are saved to file,
+/// * And a Leaderboard and Hall of Fame.
 pub struct Population {
     path: PathBuf,
 
@@ -376,6 +363,7 @@ struct PopulationMetadata {
 }
 
 impl Population {
+    ///
     pub fn new(
         path: impl AsRef<Path>,
         replacement: Replacement,
@@ -383,7 +371,7 @@ impl Population {
         leaderboard_size: usize,
         hall_of_fame_size: usize,
         score_fn: Option<Box<ScoreFn>>,
-    ) -> Result<Population, std::io::Error> {
+    ) -> Result<Population, Error> {
         assert!(population_size > 0);
         let mut path = path.as_ref().to_path_buf();
         // Fill in empty path with temp dir.
@@ -408,12 +396,12 @@ impl Population {
         this.load()?;
         Ok(this)
     }
-    fn load(&mut self) -> Result<(), std::io::Error> {
+    fn load(&mut self) -> Result<(), Error> {
         self.load_metadata()?;
         self.load_individuals()?;
         Ok(())
     }
-    fn load_metadata(&mut self) -> Result<(), std::io::Error> {
+    fn load_metadata(&mut self) -> Result<(), Error> {
         let path = self.get_metadata_path();
         if path.exists() {
             let metadata: PopulationMetadata = serde_json::from_slice(&std::fs::read(path)?).unwrap();
@@ -422,7 +410,7 @@ impl Population {
         }
         Ok(())
     }
-    fn save_metadata(&self) -> Result<(), std::io::Error> {
+    fn save_metadata(&self) -> Result<(), Error> {
         let path = self.get_metadata_path();
         let metadata = PopulationMetadata {
             ascension: self.ascension,
@@ -431,7 +419,7 @@ impl Population {
         std::fs::write(path, serde_json::to_string(&metadata).unwrap())?;
         Ok(())
     }
-    fn load_individuals(&mut self) -> Result<(), std::io::Error> {
+    fn load_individuals(&mut self) -> Result<(), Error> {
         // First setup the file system.
         let members_path = self.get_members_path();
         let waiting_path = self.get_waiting_path();
@@ -513,7 +501,7 @@ impl Population {
         &self.hall_of_fame
     }
     /// Add a new individual to this population.
-    pub fn add(&mut self, mut individual: Individual) -> Result<(), std::io::Error> {
+    pub fn add(&mut self, mut individual: Individual) -> Result<(), Error> {
         //
         let ascension = self.ascension;
         individual.ascension = Some(ascension);
@@ -569,16 +557,19 @@ impl Population {
         }
         Ok(())
     }
-    fn rollover(&mut self) -> Result<(), std::io::Error> {
+    fn rollover(&mut self) -> Result<(), Error> {
         self.rollover_leaderboard()?;
         self.rollover_hall_of_fame()?;
         self.rollover_generation()?;
         Ok(())
     }
-    fn rollover_leaderboard(&mut self) -> Result<(), std::io::Error> {
+    fn rollover_leaderboard(&mut self) -> Result<(), Error> {
+        if self.leaderboard_size == 0 {
+            return Ok(());
+        }
         let score_fn = self.score_fn.as_deref();
         // Sort together the existing leaderboard and the new contenders.
-        if !self.leaderboard.is_empty() && self.leaderboard.len() >= self.leaderboard_size {
+        if self.leaderboard.len() >= self.leaderboard_size {
             let min_score = call_score_fn(score_fn, self.leaderboard.last().unwrap());
             self.leaderboard.extend(
                 self.waiting
@@ -602,13 +593,14 @@ impl Population {
         }
         // Remove low performing individuals from the leaderboard directory.
         for individual in self.leaderboard.drain(self.leaderboard_size..) {
-            if individual.path.as_ref().unwrap().starts_with(&leaderboard_path) {
+            let path = individual.path.as_ref().unwrap();
+            if path.starts_with(&leaderboard_path) {
                 individual.remove()?;
             }
         }
         Ok(())
     }
-    fn rollover_hall_of_fame(&mut self) -> Result<(), std::io::Error> {
+    fn rollover_hall_of_fame(&mut self) -> Result<(), Error> {
         let hall_of_fame_path = self.get_hall_of_fame_path();
         // Find the highest scoring individuals in the new generation.
         self.waiting.sort_by(compare_scores(self.score_fn.as_deref()));
@@ -622,36 +614,35 @@ impl Population {
         }
         Ok(())
     }
-    fn rollover_generation(&mut self) -> Result<(), std::io::Error> {
+    fn rollover_generation(&mut self) -> Result<(), Error> {
         self.generation += 1;
         if self.replacement == Replacement::Generation {
             // Delete the current generation.
+            self.members.clear();
             let members_path = self.get_members_path();
             std::fs::remove_dir_all(&members_path)?;
-            self.members.clear();
             // Move the next generation into place.
             let waiting_path = self.get_waiting_path();
             std::fs::rename(&waiting_path, &members_path)?;
             std::fs::create_dir(waiting_path)?;
             std::mem::swap(&mut self.members, &mut self.waiting);
-            self.save_metadata()?;
             // Update the moved individual's path field.
             for individual in &mut self.members {
                 individual.path = Some(members_path.join(individual.file_name()));
             }
         } else {
-            self.save_metadata()?;
             // Discard the old generation.
             for individual in self.waiting.drain(..) {
                 individual.remove()?;
             }
         }
+        self.save_metadata()?;
         Ok(())
     }
 }
 
-/// API for evolutionary algorithms.
-pub trait Evolution {
+/// Interface for evolutionary algorithms.
+pub trait API {
     /// Get a new individual to be born into an environment.
     ///
     /// Returns an individual and a genome for the controller, which may differ
@@ -662,9 +653,19 @@ pub trait Evolution {
     fn death(&self, individual: Individual);
 }
 
+/// Callback for asexually reproducing a genome.
+///
+/// Returns a pair of (genome, phenome)
+pub type GenomeAsex = dyn Fn(&[u8]) -> (Box<[u8]>, Box<[u8]>);
+
+/// Callback for sexually reproducing two genomes.
+///
+/// Returns a pair of (genome, phenome)
+pub type GenomeSex = dyn Fn(&[u8], &[u8]) -> (Box<[u8]>, Box<[u8]>);
+
 type MateSelection = dyn mate_selection::MateSelection<rand::rngs::ThreadRng>;
 
-pub struct Evo(Mutex<Inner>);
+pub struct Evolution(Mutex<Inner>);
 
 struct Inner {
     population: Population,
@@ -674,13 +675,14 @@ struct Inner {
     parents: Vec<(Arc<Individual>, Arc<Individual>)>,
 }
 
-impl Evo {
-    pub fn new(_population: Population, _mate_selection: Box<MateSelection>) -> Self {
+impl Evolution {
+    ///
+    pub fn new(_population: Population, _mate_selection: Box<MateSelection>, _mate_genomes: &GenomeSex) -> Self {
         // Self {}
         todo!()
     }
 }
-impl Evolution for Evo {
+impl API for Evolution {
     fn spawn(&self) -> (Individual, Box<[u8]>) {
         let mut inner = self.0.lock().unwrap();
         if inner.generation != inner.population.generation {
@@ -705,110 +707,6 @@ impl Evolution for Evo {
         self.0.lock().unwrap().population.add(individual).unwrap()
     }
 }
-
-/*
-pub struct Neat {
-    speciation_distance: f64,
-    species_scores: Vec<f64>,
-    species_members: Vec<Range<usize>>,
-    parents: Vec<[usize; 2]>,
-}
-
-impl Neat {
-    pub fn new(
-        seed: Individual,
-        population_size: u64,
-        speciation_distance: f64,
-        species_distribution: Box<dyn MateSelection<impl rand::Rng>>,
-        mate_selection: Box<dyn MateSelection<impl rand::Rng>>,
-        path: Option<impl AsRef<Path>>,
-        leaderboard: u64,
-        hall_of_fame: u64,
-    ) -> Self {
-        let path = todo!();
-        Self {
-            speciation_distance,
-            species_scores: vec![0.0],
-            species_members: vec![0..1],
-            parents: vec![],
-        }
-    }
-
-    fn rollover(&mut self) {
-        // Sort the population by species.
-        self.current.sort_unstable_by_key(|x| x.species);
-
-        //
-        let mut prev_species = None;
-        let mut start = 0;
-        for (index, indiv) in self.current.iter().enumerate() {
-            if Some(indiv.species) != prev_species {
-                self.species_members.push(start..index);
-                start == index
-            }
-        }
-        self.species_members.push(start..self.current.len());
-
-        //
-        for range in &self.species_members {
-            let mut score = 0.0;
-            for indiv in self.current[*range] {
-                score += indiv.score.parse().unwrap();
-            }
-            self.species_scores.push(score / range.len() as f64);
-        }
-    }
-
-    /// Refill the parents buffer.
-    fn sample(&mut self) {
-        let rng = &mut rand::rng();
-        // Distribute the offspring to species according to their average score.
-        let species = self
-            .species_selection
-            .select(rng, self.population_size, self.species_scores.clone());
-        // Count how many offspring were allocated to each species.
-        let mut histogram = vec![0; self.species_scores.len()];
-        for x in species {
-            histogram[x] += 1;
-        }
-        // Sample parents from each species.
-        for (members, offspring) in self.species_members.iter().zip(&histogram) {
-            let scores: Vec<f64> = members.iter().map(|x| x.score.parse().unwrap()).collect();
-            for pair in self.mate_selection.pairs(offspring, scores) {
-                self.parents.push(pair.map(|index| &members[index]))
-            }
-        }
-        //
-        self.parents.shuffle(rng);
-    }
-
-    pub fn birth(&mut self, _parents: &[&Individual]) -> (u128, Arc<Genome>) {
-        //
-        if self.parents.is_empty() {
-            self.sample();
-        }
-        //
-        let Some([mother, father]) = self.parents.pop().unwrap();
-        let child = mother.mate(father).unwrap()?;
-
-        // Determine which species the child belongs to.
-        let species = if speciation_distance == 0.0 {
-            self.species
-        } else {
-            for parent in [self, other] {
-                let distance = self.genome.distance(&child);
-                if distance < speciation_distance {
-                    break self.species;
-                }
-            }
-            uuid4()
-        };
-
-        //
-        child
-    }
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -863,4 +761,6 @@ mod tests {
         assert_eq!(cmp_indiv(pop1.get_leaderboard()), cmp_indiv(pop2.get_leaderboard()));
         assert_eq!(cmp_indiv(pop1.get_hall_of_fame()), cmp_indiv(pop2.get_hall_of_fame()));
     }
+    #[test]
+    fn evo_rollover() {}
 }

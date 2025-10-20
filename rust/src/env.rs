@@ -636,7 +636,7 @@ impl Environment {
     /// Update the environment.
     ///
     /// Argument populations is a dict of evolution API instances, indexed by population name.
-    pub fn evolve(&mut self, evolution: HashMap<String, &dyn evo::Evolution>) -> Result<(), process_anywhere::Error> {
+    pub fn evolve(&mut self, evolution: HashMap<String, &dyn evo::API>) -> Result<(), process_anywhere::Error> {
         let Some(message) = self.poll()? else {
             return Ok(());
         };
