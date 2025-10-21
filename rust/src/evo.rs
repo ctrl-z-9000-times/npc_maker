@@ -210,29 +210,8 @@ impl Individual {
         file.sync_all()?; // push to disk
         std::fs::rename(&temp, &path)?; // move file into place
         self.path = Some(path);
+        self.genome.take(); // free the genome
         Ok(self.path.as_ref().unwrap())
-    }
-
-    /// Clone an individual and save it to file.
-    ///
-    /// Returns the new individual, which is equal to the input individual
-    /// except that it is saved to a new file and its genome is not loaded.
-    pub fn save_clone(&self, path: impl AsRef<Path>) -> Result<Individual, Error> {
-        self.genome(); // Load the genome into memory before the Arc gets cloned.
-        let mut clone = self.clone();
-        clone.save(path)?;
-        clone.genome.take();
-        Ok(clone)
-    }
-
-    /// Safety: ensure that this individual's save file is up to date.
-    unsafe fn copy_clone(&self, path: impl AsRef<Path>) -> Result<Individual, Error> {
-        let old_path = self.path.as_ref().unwrap();
-        let new_path = path.as_ref().join(self.file_name());
-        std::fs::copy(old_path, &new_path)?;
-        let mut clone = self.clone();
-        clone.path = Some(new_path);
-        Ok(clone)
     }
 
     /// Load a previously saved individual.
@@ -270,8 +249,8 @@ impl Individual {
         Ok(individuals)
     }
 
-    /// Delete this individual and its associated save file.
-    pub fn remove(self) -> Result<(), Error> {
+    /// Remove this individual and its associated save file.
+    pub fn delete(self) -> Result<(), Error> {
         if let Some(path) = self.path {
             std::fs::remove_file(path)?;
         }
@@ -287,9 +266,10 @@ pub type ScoreFn = dyn Fn(&Individual) -> f64;
 
 const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
 
-fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Individual) -> f64 {
+fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Arc<Mutex<Individual>>) -> f64 {
+    let individual = individual.lock().unwrap();
     if let Some(score_fn) = score_fn {
-        score_fn(individual)
+        score_fn(&individual)
     } else if let Some(score) = &individual.score {
         score.parse().unwrap_or(DEFAULT_SCORE)
     } else {
@@ -297,11 +277,13 @@ fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Individual) -> f64 {
     }
 }
 
-fn compare_scores(score_fn: Option<&ScoreFn>) -> impl Fn(&Individual, &Individual) -> std::cmp::Ordering {
+fn compare_scores(
+    score_fn: Option<&ScoreFn>,
+) -> impl Fn(&Arc<Mutex<Individual>>, &Arc<Mutex<Individual>>) -> std::cmp::Ordering {
     move |a, b| {
         let a_score = call_score_fn(score_fn, a);
         let b_score = call_score_fn(score_fn, b);
-        a_score.total_cmp(&b_score)
+        a_score.total_cmp(&b_score).reverse()
     }
 }
 
@@ -328,13 +310,13 @@ pub struct Population {
 
     generation: u64,
 
-    members: Vec<Individual>,
+    members: Vec<Arc<Mutex<Individual>>>,
 
-    waiting: Vec<Individual>,
+    waiting: Vec<Arc<Mutex<Individual>>>,
 
-    leaderboard: Vec<Individual>,
+    leaderboard: Vec<Arc<Mutex<Individual>>>,
 
-    hall_of_fame: Vec<Individual>,
+    hall_of_fame: Vec<Arc<Mutex<Individual>>>,
 }
 
 /// Controls how a population replaces its members once it's full.
@@ -360,6 +342,10 @@ pub enum Replacement {
 struct PopulationMetadata {
     ascension: u64,
     generation: u64,
+    members: Vec<String>,
+    waiting: Vec<String>,
+    leaderboard: Vec<String>,
+    hall_of_fame: Vec<String>,
 }
 
 impl Population {
@@ -372,12 +358,14 @@ impl Population {
         hall_of_fame_size: usize,
         score_fn: Option<Box<ScoreFn>>,
     ) -> Result<Population, Error> {
-        assert!(population_size > 0);
         let mut path = path.as_ref().to_path_buf();
         // Fill in empty path with temp dir.
         if path.to_str() == Some("") {
             path = std::env::temp_dir();
             path.push(format!("pop{:x}", rand::random_range(0..u64::MAX)));
+        }
+        if !path.exists() {
+            std::fs::create_dir(&path)?;
         }
         let mut this = Population {
             path,
@@ -396,59 +384,61 @@ impl Population {
         this.load()?;
         Ok(this)
     }
-    fn load(&mut self) -> Result<(), Error> {
-        self.load_metadata()?;
-        self.load_individuals()?;
-        Ok(())
-    }
-    fn load_metadata(&mut self) -> Result<(), Error> {
-        let path = self.get_metadata_path();
-        if path.exists() {
-            let metadata: PopulationMetadata = serde_json::from_slice(&std::fs::read(path)?).unwrap();
-            self.ascension = metadata.ascension;
-            self.generation = metadata.generation;
-        }
-        Ok(())
-    }
-    fn save_metadata(&self) -> Result<(), Error> {
-        let path = self.get_metadata_path();
+    fn save(&self) -> Result<(), Error> {
+        let get_name = |indiv: &Arc<Mutex<Individual>>| indiv.lock().unwrap().name.clone();
         let metadata = PopulationMetadata {
             ascension: self.ascension,
             generation: self.generation,
+            members: self.members.iter().map(get_name).collect(),
+            waiting: self.waiting.iter().map(get_name).collect(),
+            leaderboard: self.leaderboard.iter().map(get_name).collect(),
+            hall_of_fame: self.hall_of_fame.iter().map(get_name).collect(),
         };
-        std::fs::write(path, serde_json::to_string(&metadata).unwrap())?;
+        let path = self.get_metadata_path();
+        std::fs::write(path, serde_json::to_vec(&metadata).unwrap())?;
         Ok(())
     }
-    fn load_individuals(&mut self) -> Result<(), Error> {
-        // First setup the file system.
-        let members_path = self.get_members_path();
-        let waiting_path = self.get_waiting_path();
-        let leaderboard_path = self.get_leaderboard_path();
-        let hall_of_fame_path = self.get_hall_of_fame_path();
-        for path in [
-            &self.path,
-            &members_path,
-            &waiting_path,
-            &leaderboard_path,
-            &hall_of_fame_path,
-        ] {
-            if !path.exists() {
-                std::fs::create_dir(path)?;
-            }
+    fn load(&mut self) -> Result<(), Error> {
+        let path = self.get_metadata_path();
+        if !path.exists() {
+            return Ok(());
         }
+        let metadata: PopulationMetadata = serde_json::from_slice(&std::fs::read(&path)?).unwrap();
+        self.ascension = metadata.ascension;
+        self.generation = metadata.generation;
         //
-        self.members = Individual::load_dir(members_path)?;
-        self.waiting = Individual::load_dir(waiting_path)?;
-        self.leaderboard = Individual::load_dir(leaderboard_path)?;
-        self.hall_of_fame = Individual::load_dir(hall_of_fame_path)?;
-        //
+        let individuals: HashMap<String, Arc<Mutex<Individual>>> = Individual::load_dir(&self.path)?
+            .into_iter()
+            .map(|individual| (individual.name.to_string(), Arc::from(Mutex::from(individual))))
+            .collect();
+        let lookup = |individual: &String| individuals.get(individual).unwrap().clone();
+        self.members = metadata.members.iter().map(lookup).collect();
+        self.waiting = metadata.waiting.iter().map(lookup).collect();
+        self.leaderboard = metadata.leaderboard.iter().map(lookup).collect();
+        self.hall_of_fame = metadata.hall_of_fame.iter().map(lookup).collect();
+        // Sort the historical data to enforce invariants.
         self.leaderboard.sort_by(compare_scores(self.score_fn.as_deref()));
-        self.hall_of_fame.sort_by_key(|x| x.ascension.unwrap_or(u64::MAX));
+        self.hall_of_fame
+            .sort_by_key(|x| x.lock().unwrap().ascension.unwrap_or(u64::MAX));
+        Ok(())
+    }
+    /// Return a cloned individual back to the population.
+    ///
+    /// The population uses Arc's to determine when to delete the file backing
+    /// each individual. This method will delete the individual if this is the
+    /// last reference to it.
+    pub fn drop_individual(this: Arc<Mutex<Individual>>) -> Result<(), Error> {
+        if let Some(this) = Arc::into_inner(this) {
+            this.into_inner().unwrap().delete()?;
+        }
         Ok(())
     }
     /// Get the path argument or a temporary directory.
     pub fn get_path(&self) -> &Path {
         &self.path
+    }
+    fn get_metadata_path(&self) -> PathBuf {
+        self.path.join("population.json")
     }
     /// Get the replacement argument.
     pub fn get_replacement(&self) -> Replacement {
@@ -457,26 +447,6 @@ impl Population {
     /// Get the population_size argument.
     pub fn get_population_size(&self) -> usize {
         self.population_size
-    }
-    fn get_metadata_path(&self) -> PathBuf {
-        self.path.join("population.json")
-    }
-    /// Get the current population's directory.
-    fn get_members_path(&self) -> PathBuf {
-        self.path.join("members")
-    }
-    /// Get the waiting directory. Individuals are staged here until the next
-    /// generation rollover.
-    fn get_waiting_path(&self) -> PathBuf {
-        self.path.join("waiting")
-    }
-    /// Get the leaderboard path. If disabled then directory will be empty.
-    fn get_leaderboard_path(&self) -> PathBuf {
-        self.path.join("leaderboard")
-    }
-    /// Get the hall of fame path. If disabled then directory will be empty.
-    fn get_hall_of_fame_path(&self) -> PathBuf {
-        self.path.join("hall_of_fame")
     }
     /// Get the total number of individuals added to the population.
     pub fn get_ascension(&self) -> u64 {
@@ -487,80 +457,83 @@ impl Population {
         self.generation
     }
     /// Get the current members of the population.
-    pub fn get_members(&self) -> &[Individual] {
+    pub fn get_members(&self) -> &[Arc<Mutex<Individual>>] {
         &self.members
     }
     /// Get the highest scoring individuals ever recorded. This is sorted
     /// descending by score, so that leaderboard\[0\] is the best individual.
-    pub fn get_leaderboard(&self) -> &[Individual] {
+    pub fn get_leaderboard(&self) -> &[Arc<Mutex<Individual>>] {
         &self.leaderboard
     }
     /// Get the highest scoring individuals from each generation. This is sorted
     /// by ascension, so that hall_of_fame\[0\] is the oldest.
-    pub fn get_hall_of_fame(&self) -> &[Individual] {
+    pub fn get_hall_of_fame(&self) -> &[Arc<Mutex<Individual>>] {
         &self.hall_of_fame
     }
     /// Add a new individual to this population.
-    pub fn add(&mut self, mut individual: Individual) -> Result<(), Error> {
-        //
-        let ascension = self.ascension;
-        individual.ascension = Some(ascension);
+    pub fn add(&mut self, mut individual: Individual) -> Result<Arc<Mutex<Individual>>, Error> {
+        debug_assert!(individual.ascension.is_none());
+        individual.ascension = Some(self.ascension);
         self.ascension += 1;
-        // Stage the individual in the waiting directory.
-        let waiting_clone = individual.save_clone(self.get_waiting_path())?;
-        // Make room in the current members directory for one more individual.
+        //
+        individual.save(&self.path)?;
+        let individual = Arc::from(Mutex::from(individual));
+        // Make room in the current members list for one more individual.
         match self.replacement {
             Replacement::Unbounded => {}
             Replacement::Generation => {}
             Replacement::Random => {
-                while self.members.len() >= self.population_size {
+                while !self.members.is_empty() && self.members.len() >= self.population_size {
                     let random_index = rand::random_range(0..self.members.len());
-                    self.members.swap_remove(random_index).remove()?;
+                    let random_individual = self.members.swap_remove(random_index);
+                    Self::drop_individual(random_individual)?;
                 }
             }
             Replacement::Worst => {
-                let cmp = compare_scores(self.score_fn.as_deref());
-                while self.members.len() >= self.population_size {
-                    let (worst_index, _worst_individual) =
-                        self.members.iter().enumerate().min_by(|a, b| cmp(a.1, b.1)).unwrap();
-                    self.members.swap_remove(worst_index).remove()?;
+                let compare_scores = compare_scores(self.score_fn.as_deref());
+                while !self.members.is_empty() && self.members.len() >= self.population_size {
+                    let (worst_index, _worst_individual) = self
+                        .members
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| compare_scores(a.1, b.1))
+                        .unwrap();
+                    let worst_individual = self.members.swap_remove(worst_index);
+                    Self::drop_individual(worst_individual)?;
                 }
             }
             Replacement::Oldest => {
-                while self.members.len() >= self.population_size {
+                while !self.members.is_empty() && self.members.len() >= self.population_size {
                     let (oldest_index, _oldest_individual) = self
                         .members
                         .iter()
                         .enumerate()
-                        .min_by_key(|(_index, individual)| individual.ascension)
+                        .min_by_key(|(_index, individual)| individual.lock().unwrap().ascension)
                         .unwrap();
-                    self.members.swap_remove(oldest_index).remove()?;
+                    let oldest_individual = self.members.swap_remove(oldest_index);
+                    Self::drop_individual(oldest_individual)?;
                 }
             }
         }
         // Save the individual into the current generation.
         match self.replacement {
             Replacement::Unbounded | Replacement::Random | Replacement::Worst | Replacement::Oldest => {
-                let waiting_path = waiting_clone.path.as_ref().unwrap();
-                let mut member_path = self.get_members_path();
-                member_path.push(individual.file_name());
-                std::fs::copy(waiting_path, &member_path)?;
-                individual.path = Some(member_path);
-                self.members.push(individual);
+                self.members.push(individual.clone());
             }
-            Replacement::Generation => {} // Does not save to the current generation.
+            Replacement::Generation => {}
         }
-        self.waiting.push(waiting_clone);
-        // Cycle the next generation into place, and update bookkeeping.
+        // Stage the individual for the next generation and bookkeeping.
+        self.waiting.push(individual.clone());
         if self.waiting.len() >= self.population_size {
             self.rollover()?;
         }
-        Ok(())
+        Ok(individual)
     }
     fn rollover(&mut self) -> Result<(), Error> {
         self.rollover_leaderboard()?;
         self.rollover_hall_of_fame()?;
         self.rollover_generation()?;
+        self.save()?;
         Ok(())
     }
     fn rollover_leaderboard(&mut self) -> Result<(), Error> {
@@ -568,75 +541,47 @@ impl Population {
             return Ok(());
         }
         let score_fn = self.score_fn.as_deref();
-        // Sort together the existing leaderboard and the new contenders.
-        if self.leaderboard.len() >= self.leaderboard_size {
-            let min_score = call_score_fn(score_fn, self.leaderboard.last().unwrap());
-            self.leaderboard.extend(
-                self.waiting
-                    .iter()
-                    .filter(|individual| call_score_fn(score_fn, individual) > min_score)
-                    .cloned(),
-            );
+        let min_score = if self.leaderboard.len() >= self.leaderboard_size {
+            call_score_fn(score_fn, self.leaderboard.last().unwrap())
         } else {
-            self.leaderboard.extend_from_slice(&self.waiting); // clone
-        }
+            f64::NEG_INFINITY
+        };
+        // Sort together the existing leaderboard and the new contenders.
+        self.leaderboard.extend(
+            self.waiting
+                .iter()
+                .filter(|individual| call_score_fn(score_fn, individual) > min_score)
+                .cloned(),
+        );
+        // Use stable sort to preserve ascension ordering.
         self.leaderboard.sort_by(compare_scores(score_fn));
-        // Move new winners to the leaderboard directory.
-        let leaderboard_path = self.get_leaderboard_path();
-        for individual in &mut self.leaderboard[..self.leaderboard_size] {
-            let old_path = individual.path.as_ref().unwrap();
-            if !old_path.starts_with(&leaderboard_path) {
-                let new_path = leaderboard_path.join(individual.file_name());
-                std::fs::copy(old_path, &new_path)?;
-                individual.path = Some(new_path);
-            }
-        }
         // Remove low performing individuals from the leaderboard directory.
-        for individual in self.leaderboard.drain(self.leaderboard_size..) {
-            let path = individual.path.as_ref().unwrap();
-            if path.starts_with(&leaderboard_path) {
-                individual.remove()?;
+        if self.leaderboard.len() > self.leaderboard_size {
+            for individual in self.leaderboard.drain(self.leaderboard_size..) {
+                Self::drop_individual(individual)?;
             }
         }
         Ok(())
     }
     fn rollover_hall_of_fame(&mut self) -> Result<(), Error> {
-        let hall_of_fame_path = self.get_hall_of_fame_path();
         // Find the highest scoring individuals in the new generation.
-        self.waiting.sort_by(compare_scores(self.score_fn.as_deref()));
+        self.waiting
+            .select_nth_unstable_by(self.hall_of_fame_size, compare_scores(self.score_fn.as_deref()));
         let winners = &mut self.waiting[..self.hall_of_fame_size];
-        winners.sort_unstable_by_key(|individual| individual.ascension);
-        // Copy the inductees into the hall_of_fame directory.
-        for individual in winners {
-            unsafe {
-                self.hall_of_fame.push(individual.copy_clone(&hall_of_fame_path)?);
-            }
-        }
+        winners.sort_unstable_by_key(|individual| individual.lock().unwrap().ascension);
+        self.hall_of_fame.extend_from_slice(winners);
         Ok(())
     }
     fn rollover_generation(&mut self) -> Result<(), Error> {
         self.generation += 1;
+        // Move the next generation into place.
         if self.replacement == Replacement::Generation {
-            // Delete the current generation.
-            self.members.clear();
-            let members_path = self.get_members_path();
-            std::fs::remove_dir_all(&members_path)?;
-            // Move the next generation into place.
-            let waiting_path = self.get_waiting_path();
-            std::fs::rename(&waiting_path, &members_path)?;
-            std::fs::create_dir(waiting_path)?;
             std::mem::swap(&mut self.members, &mut self.waiting);
-            // Update the moved individual's path field.
-            for individual in &mut self.members {
-                individual.path = Some(members_path.join(individual.file_name()));
-            }
-        } else {
-            // Discard the old generation.
-            for individual in self.waiting.drain(..) {
-                individual.remove()?;
-            }
         }
-        self.save_metadata()?;
+        // Discard the old generation.
+        for individual in self.waiting.drain(..) {
+            Self::drop_individual(individual)?;
+        }
         Ok(())
     }
 }
@@ -653,6 +598,25 @@ pub trait API {
     fn death(&self, individual: Individual);
 }
 
+pub struct Evolution {
+    inner: Mutex<Inner>,
+
+    mate_selection: Box<MateSelection>,
+
+    mate_genomes: Box<GenomeSex>,
+}
+
+struct Inner {
+    population: Population,
+
+    generation: u64,
+
+    parents: Vec<(Arc<Mutex<Individual>>, Arc<Mutex<Individual>>)>,
+}
+
+///
+pub type MateSelection = dyn mate_selection::MateSelection<rand::rngs::ThreadRng>;
+
 /// Callback for asexually reproducing a genome.
 ///
 /// Returns a pair of (genome, phenome)
@@ -663,48 +627,78 @@ pub type GenomeAsex = dyn Fn(&[u8]) -> (Box<[u8]>, Box<[u8]>);
 /// Returns a pair of (genome, phenome)
 pub type GenomeSex = dyn Fn(&[u8], &[u8]) -> (Box<[u8]>, Box<[u8]>);
 
-type MateSelection = dyn mate_selection::MateSelection<rand::rngs::ThreadRng>;
-
-pub struct Evolution(Mutex<Inner>);
-
-struct Inner {
-    population: Population,
-
-    generation: u64,
-
-    parents: Vec<(Arc<Individual>, Arc<Individual>)>,
-}
-
 impl Evolution {
     ///
-    pub fn new(_population: Population, _mate_selection: Box<MateSelection>, _mate_genomes: &GenomeSex) -> Self {
-        // Self {}
-        todo!()
+    pub fn new(
+        population: Population,
+        mate_selection: Box<MateSelection>,
+        mate_genomes: Box<GenomeSex>,
+    ) -> Result<Self, Error> {
+        let generation = population.get_generation();
+        Ok(Self {
+            inner: Mutex::from(Inner {
+                population,
+                generation,
+                parents: vec![],
+            }),
+            mate_selection,
+            mate_genomes,
+        })
     }
 }
 impl API for Evolution {
     fn spawn(&self) -> (Individual, Box<[u8]>) {
-        let mut inner = self.0.lock().unwrap();
-        if inner.generation != inner.population.generation {
-            inner.parents.clear();
-            inner.generation = inner.population.generation;
+        let rng = &mut rand::rng();
+        let mut inner = self.inner.lock().unwrap();
+        let Inner {
+            population,
+            generation,
+            parents,
+        } = &mut *inner;
+        if population.get_replacement() == Replacement::Generation {
+            todo!()
         }
-
-        if inner.parents.is_empty() {
-            let members = inner.population.get_members();
-            let score_fn = inner.population.score_fn.as_deref();
-            let _scores = members
+        if *generation != population.get_generation() {
+            parents.clear();
+            *generation = population.get_generation();
+        }
+        if parents.is_empty() {
+            let num_pairs = if population.get_replacement() == Replacement::Generation {
+                population.get_population_size()
+            } else {
+                1
+            };
+            let members = population.get_members();
+            let score_fn = population.score_fn.as_deref();
+            let scores = members
                 .iter()
                 .map(|indivdiual| call_score_fn(score_fn, indivdiual))
                 .collect::<Vec<f64>>();
-            let _buffer = inner.population.get_population_size();
-            // let pairs = mate_selection.pairs(scores, buffer);
+            let pairs = self.mate_selection.pairs(rng, num_pairs, scores);
+            let members = population.get_members();
+            for [index1, index2] in pairs {
+                let parent1 = members[index1].clone();
+                let parent2 = members[index2].clone();
+                parents.push((parent1, parent2));
+            }
         }
-
-        todo!()
+        let (parent1, parent2) = parents.pop().unwrap();
+        drop(inner);
+        if Arc::as_ptr(&parent1) == Arc::as_ptr(&parent2) {
+            todo!()
+            // let mut parent1 = parent1.lock().unwrap();
+            // let (genome, phenome) = (self.clone_genome)(&parent1.genome());
+            // (parent1.asex(&genome), phenome)
+        } else {
+            let mut parent1 = parent1.lock().unwrap();
+            let mut parent2 = parent2.lock().unwrap();
+            let (genome, phenome) = (self.mate_genomes)(&parent1.genome(), &parent2.genome());
+            (parent1.sex(&mut parent2, &genome), phenome)
+        }
     }
     fn death(&self, individual: Individual) {
-        self.0.lock().unwrap().population.add(individual).unwrap()
+        let mut inner = self.inner.lock().unwrap();
+        inner.population.add(individual).unwrap();
     }
 }
 
@@ -730,29 +724,33 @@ mod tests {
         indiv1.extra.insert("X".into(), "Y".into());
         let path = dbg!(indiv1.save(std::env::temp_dir())).unwrap();
         let indiv2 = Individual::load(path).unwrap();
+        indiv1.genome();
         indiv2.genome();
         assert_eq!(indiv1, indiv2);
     }
     #[test]
     fn pop_save_load() {
-        let mut pop1 = Population::new("", Replacement::Unbounded, 10, 3, 1, None).unwrap();
+        let mut pop1 = Population::new("", Replacement::Generation, 10, 3, 2, None).unwrap();
 
         for _ in 0..30 {
             let mut genome = Box::new(*b"beepboop");
             rand::fill(&mut genome[..]);
-            let indiv = Individual::new("foo", "bar", &["ctrl", "prog"], genome);
+            let mut indiv = Individual::new("foo", "bar", &["ctrl", "prog"], genome);
+            indiv.score = Some(rand::random::<f64>().to_string());
             pop1.add(indiv).unwrap();
         }
-        dbg!(pop1.get_members());
-        pop1.save_metadata().unwrap();
-        let pop2 = Population::new(pop1.get_path(), Replacement::Unbounded, 10, 3, 1, None).unwrap();
+        pop1.save().unwrap();
+        let pop2 = Population::new(pop1.get_path(), Replacement::Generation, 10, 3, 2, None).unwrap();
         assert_eq!(pop1.get_path(), pop2.get_path());
         assert_eq!(pop1.get_ascension(), pop2.get_ascension());
         assert_eq!(pop1.get_generation(), pop2.get_generation());
-        fn cmp_indiv(individuals: &[Individual]) -> Vec<(Option<PathBuf>, Arc<[u8]>)> {
+        fn cmp_indiv(individuals: &[Arc<Mutex<Individual>>]) -> Vec<(Option<PathBuf>, Arc<[u8]>)> {
             let mut stubs = individuals
                 .iter()
-                .map(|stub| (stub.path.clone(), stub.genome()))
+                .map(|stub| {
+                    let stub = stub.lock().unwrap();
+                    (stub.path.clone(), stub.genome())
+                })
                 .collect::<Vec<(Option<PathBuf>, Arc<[u8]>)>>();
             stubs.sort();
             stubs
@@ -760,7 +758,13 @@ mod tests {
         assert_eq!(cmp_indiv(pop1.get_members()), cmp_indiv(pop2.get_members()));
         assert_eq!(cmp_indiv(pop1.get_leaderboard()), cmp_indiv(pop2.get_leaderboard()));
         assert_eq!(cmp_indiv(pop1.get_hall_of_fame()), cmp_indiv(pop2.get_hall_of_fame()));
+        assert_eq!(pop2.get_members().len(), 10);
+        assert_eq!(pop2.get_leaderboard().len(), 3);
+        assert_eq!(pop2.get_hall_of_fame().len(), 6);
     }
+
     #[test]
-    fn evo_rollover() {}
+    fn evo_rollover() {
+        todo!()
+    }
 }
