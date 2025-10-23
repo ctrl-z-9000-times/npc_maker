@@ -287,6 +287,20 @@ fn compare_scores(
     }
 }
 
+// TOOD: Consider introducing a mutex lock into the population so that
+// Population.add() is immutable. This would allow finer grained locking.
+// Then move the file-system tasks out of the mutex-locked critical section.
+//
+// Psuedo Code:
+//
+// fn add(&self, individual) {
+//      1) individual.save()
+//      2) lock mutex
+//      3) reckon the population
+//      4) release mutex
+//      5) delete individuals
+//
+
 /// A group of individuals.
 ///
 /// This manages an evolving population of individuals, featuring:
@@ -478,7 +492,7 @@ impl Population {
         //
         individual.save(&self.path)?;
         let individual = Arc::from(Mutex::from(individual));
-        // Make room in the current members list for one more individual.
+        // Make room in the current members list for another individual.
         match self.replacement {
             Replacement::Unbounded => {}
             Replacement::Generation => {}
@@ -529,7 +543,8 @@ impl Population {
         }
         Ok(individual)
     }
-    fn rollover(&mut self) -> Result<(), Error> {
+    ///
+    pub fn rollover(&mut self) -> Result<(), Error> {
         self.rollover_leaderboard()?;
         self.rollover_hall_of_fame()?;
         self.rollover_generation()?;
@@ -565,9 +580,11 @@ impl Population {
     }
     fn rollover_hall_of_fame(&mut self) -> Result<(), Error> {
         // Find the highest scoring individuals in the new generation.
+        let n = self.hall_of_fame_size.min(self.waiting.len() - 1);
+        // This should be a stable sort but std does not support it.
         self.waiting
-            .select_nth_unstable_by(self.hall_of_fame_size, compare_scores(self.score_fn.as_deref()));
-        let winners = &mut self.waiting[..self.hall_of_fame_size];
+            .select_nth_unstable_by(n, compare_scores(self.score_fn.as_deref()));
+        let winners = &mut self.waiting[..n];
         winners.sort_unstable_by_key(|individual| individual.lock().unwrap().ascension);
         self.hall_of_fame.extend_from_slice(winners);
         Ok(())
@@ -649,19 +666,19 @@ impl Evolution {
 impl API for Evolution {
     fn spawn(&self) -> (Individual, Box<[u8]>) {
         let rng = &mut rand::rng();
+        // Lock and unpack this structure.
         let mut inner = self.inner.lock().unwrap();
         let Inner {
             population,
             generation,
             parents,
         } = &mut *inner;
-        if population.get_replacement() == Replacement::Generation {
-            todo!()
-        }
+        // Check for rollover event.
         if *generation != population.get_generation() {
             parents.clear();
             *generation = population.get_generation();
         }
+        // Refill parents buffer.
         if parents.is_empty() {
             let num_pairs = if population.get_replacement() == Replacement::Generation {
                 population.get_population_size()
@@ -669,11 +686,8 @@ impl API for Evolution {
                 1
             };
             let members = population.get_members();
-            let score_fn = population.score_fn.as_deref();
-            let scores = members
-                .iter()
-                .map(|indivdiual| call_score_fn(score_fn, indivdiual))
-                .collect::<Vec<f64>>();
+            let score_fn = |indivdiual| call_score_fn(population.score_fn.as_deref(), indivdiual);
+            let scores = members.iter().map(score_fn).collect::<Vec<f64>>();
             let pairs = self.mate_selection.pairs(rng, num_pairs, scores);
             let members = population.get_members();
             for [index1, index2] in pairs {
@@ -682,13 +696,13 @@ impl API for Evolution {
                 parents.push((parent1, parent2));
             }
         }
+        // Get and mate parents.
         let (parent1, parent2) = parents.pop().unwrap();
         drop(inner);
         if Arc::as_ptr(&parent1) == Arc::as_ptr(&parent2) {
-            todo!()
-            // let mut parent1 = parent1.lock().unwrap();
-            // let (genome, phenome) = (self.clone_genome)(&parent1.genome());
-            // (parent1.asex(&genome), phenome)
+            let mut parent1 = parent1.lock().unwrap();
+            let (genome, phenome) = (self.mate_genomes)(&parent1.genome(), &parent1.genome());
+            (parent1.asex(&genome), phenome)
         } else {
             let mut parent1 = parent1.lock().unwrap();
             let mut parent2 = parent2.lock().unwrap();
@@ -764,7 +778,46 @@ mod tests {
     }
 
     #[test]
-    fn evo_rollover() {
-        todo!()
+    fn evo() {
+        fn new_genome() -> Box<[u8]> {
+            rand::random_iter::<u8>()
+                .take(10)
+                .collect::<Vec<u8>>()
+                .into_boxed_slice()
+        }
+        fn mate_fn(a: &[u8], b: &[u8]) -> (Box<[u8]>, Box<[u8]>) {
+            let n = a.len();
+            let crossover = rand::random_range(0..n);
+            let mut c = vec![];
+            c.extend_from_slice(&a[0..crossover]);
+            c.extend_from_slice(&b[crossover..n]);
+            if rand::random_bool(0.5) {
+                c[rand::random_range(0..n)] = rand::random();
+            }
+            (c.clone().into_boxed_slice(), c.into_boxed_slice())
+        }
+        fn eval(a: &[u8], b: &[u8]) -> String {
+            let abs_dif = a.iter().zip(b).map(|(&x, &y)| (x as f64 - y as f64).abs()).sum::<f64>();
+            (-abs_dif).to_string()
+        }
+        let target_genome = new_genome();
+        let seed_genome = new_genome();
+        let seed_score = eval(&seed_genome, &target_genome);
+        let mut seed = Individual::new("", "", &[], seed_genome);
+        seed.score = Some(seed_score);
+        let mut pop = Population::new("", Replacement::Generation, 100, 3, 1, None).unwrap();
+        pop.add(seed).unwrap();
+        pop.rollover().unwrap();
+        let evo = Evolution::new(pop, Box::new(mate_selection::RankedExponential(5)), Box::new(mate_fn)).unwrap();
+        while evo.inner.lock().unwrap().population.get_generation() < 20 {
+            let (mut x, y) = evo.spawn();
+            x.score = Some(eval(&y, &target_genome));
+            evo.death(x);
+        }
+        for indiv in evo.inner.lock().unwrap().population.get_hall_of_fame() {
+            println!("{}", indiv.lock().unwrap().score.as_ref().unwrap());
+        }
+        let best = evo.inner.lock().unwrap().population.get_leaderboard()[0].clone();
+        assert!(best.lock().unwrap().score.as_ref().unwrap().parse::<f64>().unwrap() > -100.0);
     }
 }

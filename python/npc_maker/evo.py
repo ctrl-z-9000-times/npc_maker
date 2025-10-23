@@ -150,8 +150,7 @@ class Individual:
         self.ascension      = int(ascension)    if ascension is not None else None
         self.extra          = extra
         self.path           = Path(path)        if path is not None else None
-        # assert isinstance(genome, Genome) or isinstance(genome, bytes) or genome is None, f"expected Genome instance, found {type(genome).__name__}"
-        assert genome is not None or self.path is not None
+        assert genome is not None or self.path is not None, "missing genome"
 
     @staticmethod
     def _clean_ctrl_command(command):

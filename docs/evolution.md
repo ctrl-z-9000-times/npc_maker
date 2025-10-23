@@ -1,26 +1,23 @@
 # The Evolution Interface #
 
 The evolution API defines a service which gives out genomes upon request.
-Genomes are the parameters for AI agents. This API supports evolutionary
-algorithms as well as most other parameter optimization techniques.
+Genomes are the parameters for AI agents.
 
 Each instance of the evolution API is responsible for exactly one population, so
 environments with multiple populations will need multiple instances. Each
 population evolves independently. One instance can serve multiple environments.
 
-The evolution API has two methods: birth and death, which mark the beginning and
+The evolution API has two methods: spawn and death, which mark the beginning and
 end of an individual's life cycle.
 
 
-## Birth ##
+## Spawn ##
 
-The birth method generates new genomes. Environments may suggest specific
-parents to mate together, however the birth method may choose to ignore the
-given parents. The birth method may generate genomes by any method it sees fit.
-The returned individual must have a genome and a controller, other attributes
-are optional.
+The spawn method generates new genomes. The spawn method may generate genomes by
+any method it sees fit. The returned individual must have a genome and a
+controller, other attributes are optional.
 
-_method signature:_ `instance.birth(self, parents: list-of-individuals) -> individual`
+_method signature:_ `instance.spawn(self) -> individual`
 
 
 ## Death ##
