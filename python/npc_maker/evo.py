@@ -2,6 +2,13 @@
 Evolutionary algorithms and supporting tools.
 """
 
+# TODO: Reckon API differences between python and rust.
+#   * Genome API: clone & mate vs asex & sex.
+#   * Population: subclasses vs type enumeration.
+#   * Population: python and rust use different file structures, rust version is better.
+#   * Evolution: renamed to API in rust.
+#   * Python population ignores individuals with invalid scores, rust sets score to -inf.
+
 from pathlib import Path
 import copy
 import io
@@ -65,7 +72,7 @@ class Genome:
     """
     def express(self) -> bytes:
         """
-        Package the genome in preparation for sending it to the control system.
+        Prepare the genome for sending it to the control system.
         """
         raise TypeError("abstract method called")
 

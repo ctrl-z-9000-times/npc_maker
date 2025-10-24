@@ -29,7 +29,7 @@ pub struct Individual {
     /// Name of the population that this individual belongs to.
     pub population: String,
 
-    /// UUID of this individual's species.
+    /// Name or UUID of this individual's species.
     /// Mating may be restricted to individuals of the same species.
     pub species: String,
 
@@ -70,7 +70,7 @@ pub struct Individual {
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 
-    /// Get the file path this individual was loaded from or saved to, or None
+    /// The file path this individual was loaded from or saved to, or None
     /// if this individual has not touched the file system.
     #[serde(skip)]
     pub path: Option<PathBuf>,
@@ -256,6 +256,15 @@ impl Individual {
         }
         Ok(())
     }
+
+    /// Delete the individual if this is the last reference to it.
+    pub fn drop(this: Arc<Mutex<Self>>) -> Result<(), Error> {
+        if let Some(mutex) = Arc::into_inner(this) {
+            let individual = mutex.into_inner().unwrap();
+            individual.delete()?;
+        }
+        Ok(())
+    }
 }
 
 /// Individuals may have custom scores functions with this type signature.
@@ -436,17 +445,6 @@ impl Population {
             .sort_by_key(|x| x.lock().unwrap().ascension.unwrap_or(u64::MAX));
         Ok(())
     }
-    /// Return a cloned individual back to the population.
-    ///
-    /// The population uses Arc's to determine when to delete the file backing
-    /// each individual. This method will delete the individual if this is the
-    /// last reference to it.
-    pub fn drop_individual(this: Arc<Mutex<Individual>>) -> Result<(), Error> {
-        if let Some(this) = Arc::into_inner(this) {
-            this.into_inner().unwrap().delete()?;
-        }
-        Ok(())
-    }
     /// Get the path argument or a temporary directory.
     pub fn get_path(&self) -> &Path {
         &self.path
@@ -500,7 +498,7 @@ impl Population {
                 while !self.members.is_empty() && self.members.len() >= self.population_size {
                     let random_index = rand::random_range(0..self.members.len());
                     let random_individual = self.members.swap_remove(random_index);
-                    Self::drop_individual(random_individual)?;
+                    Individual::drop(random_individual)?;
                 }
             }
             Replacement::Worst => {
@@ -513,7 +511,7 @@ impl Population {
                         .min_by(|a, b| compare_scores(a.1, b.1))
                         .unwrap();
                     let worst_individual = self.members.swap_remove(worst_index);
-                    Self::drop_individual(worst_individual)?;
+                    Individual::drop(worst_individual)?;
                 }
             }
             Replacement::Oldest => {
@@ -525,7 +523,7 @@ impl Population {
                         .min_by_key(|(_index, individual)| individual.lock().unwrap().ascension)
                         .unwrap();
                     let oldest_individual = self.members.swap_remove(oldest_index);
-                    Self::drop_individual(oldest_individual)?;
+                    Individual::drop(oldest_individual)?;
                 }
             }
         }
@@ -573,7 +571,7 @@ impl Population {
         // Remove low performing individuals from the leaderboard directory.
         if self.leaderboard.len() > self.leaderboard_size {
             for individual in self.leaderboard.drain(self.leaderboard_size..) {
-                Self::drop_individual(individual)?;
+                Individual::drop(individual)?;
             }
         }
         Ok(())
@@ -597,7 +595,7 @@ impl Population {
         }
         // Discard the old generation.
         for individual in self.waiting.drain(..) {
-            Self::drop_individual(individual)?;
+            Individual::drop(individual)?;
         }
         Ok(())
     }
@@ -661,6 +659,12 @@ impl Evolution {
             mate_selection,
             mate_genomes,
         })
+    }
+    pub fn into_inner(self) -> Population {
+        self.inner.into_inner().unwrap().population
+    }
+    pub fn get_generation(&self) -> u64 {
+        self.inner.lock().unwrap().generation
     }
 }
 impl API for Evolution {
@@ -776,7 +780,6 @@ mod tests {
         assert_eq!(pop2.get_leaderboard().len(), 3);
         assert_eq!(pop2.get_hall_of_fame().len(), 6);
     }
-
     #[test]
     fn evo() {
         fn new_genome() -> Box<[u8]> {
