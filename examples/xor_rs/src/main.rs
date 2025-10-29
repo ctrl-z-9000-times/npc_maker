@@ -43,7 +43,7 @@ fn main() {
     let mut ctrl: Option<Controller> = None;
 
     loop {
-        env::spawn(Some("xor"));
+        env::spawn("xor");
 
         let result = env::input();
         if let Err(error) = &result {
@@ -62,10 +62,10 @@ fn main() {
 
         ctrl.genome(&genome).unwrap();
 
-        let score = xor_test(ctrl, mode == env::Mode::Graphical);
+        let score = xor_env(ctrl, mode == env::Mode::Graphical);
 
-        env::score(Some(&indiv.name), &score.to_string());
+        env::score(&indiv.name, &score.to_string());
 
-        env::death(Some(&indiv.name));
+        env::death(&indiv.name);
     }
 }

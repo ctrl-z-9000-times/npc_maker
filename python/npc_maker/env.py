@@ -586,10 +586,25 @@ class Environment:
         Send an individual to the environment.
         Does not flush.
         """
-        metadata, genome = individual.birth()
+        # First package up this individual for sending it to an environment.
+        population = individual.population
+        if population is None:
+            population = ""
+        controller = individual.get_controller()
+        if not controller:
+            raise ValueError("missing controller")
+        controller[0] = str(controller[0]) # Convert Path to String
+        phenome = individual.phenome()
+        metadata = {
+            "name": self.name,
+            "population": population,
+            "parents": self.parents,
+            "controller": controller,
+            "genome": len(phenome),
+        }
         self._process.stdin.write(json.dumps(metadata).encode("utf-8"))
         self._process.stdin.write(b"\n")
-        self._process.stdin.write(genome)
+        self._process.stdin.write(phenome)
         self._outstanding[individual.name] = individual
         individual.birth_date = _timestamp()
         individual.save(self._tempdir.name)

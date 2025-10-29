@@ -6,7 +6,7 @@ Evolutionary algorithms and supporting tools.
 #   * Genome API: clone & mate vs asex & sex.
 #   * Population: subclasses vs type enumeration.
 #   * Population: python and rust use different file structures, rust version is better.
-#   * Evolution: renamed to API in rust.
+#   * Evolution: folded into Population class, rename Population to Evolution.
 #   * Python population ignores individuals with invalid scores, rust sets score to -inf.
 
 from pathlib import Path
@@ -70,7 +70,7 @@ class Genome:
     """
     Abstract class for implementing genetic algorithms.
     """
-    def express(self) -> bytes:
+    def phenome(self) -> bytes:
         """
         Prepare the genome for sending it to the control system.
         """
@@ -112,7 +112,7 @@ class Epigenome(Genome):
     """
     Abstract class for implementing genetic algorithms with epigenetic modifications.
     """
-    def express(self, epigenome) -> bytes:
+    def phenome(self, epigenome) -> bytes:
         raise TypeError("abstract method called")
 
     def mate(self, epigenome, other, other_epigenome) -> 'Genome':
@@ -329,15 +329,15 @@ class Individual:
         """
         return self.path
 
-    def express(self):
+    def phenome(self):
         """
         Format the genome into a binary blob for the control system.
         """
         genome = self.get_genome()
         if isinstance(genome, Epigenome):
-            parameters = genome.express(self.epigenome)
+            parameters = genome.phenome(self.epigenome)
         elif isinstance(genome, Genome):
-            parameters = genome.express()
+            parameters = genome.phenome()
         else:
             parameters = genome
         # Check data type.
@@ -345,29 +345,6 @@ class Individual:
             parameters = parameters.encode("utf-8")
         assert isinstance(parameters, bytes)
         return parameters
-
-    def birth(self) -> (dict, bytes):
-        """
-        Package up this individual for sending it to an environment.
-
-        Returns a pair of (dict, bytes) for the metadata and genome, respectively.
-        """
-        population = self.population
-        if population is None:
-            population = ""
-        controller = self.get_controller()
-        if not controller:
-            raise ValueError("missing controller")
-        controller[0] = str(controller[0]) # Convert Path to String
-        parameters = self.express()
-        metadata = {
-            "name": self.name,
-            "population": population,
-            "parents": self.parents,
-            "controller": controller,
-            "genome": len(parameters),
-        }
-        return (metadata, parameters)
 
     def clone(self):
         """

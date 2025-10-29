@@ -15,7 +15,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 fn timestamp() -> String {
-    todo!()
+    use chrono::{SecondsFormat, Utc};
+    let rfc3339 = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, false);
+    // Replace the 'T' separator with a space.
+    rfc3339.replacen("T", " ", 1)
 }
 
 /// Static description of an environment and its interfaces.  
@@ -353,7 +356,7 @@ pub fn input() -> Result<(Individual, Box<[u8]>), io::Error> {
     Ok((metadata, binary))
 }
 
-/// Metadata for an individual.
+/// Metadata for an individual, as recevied by the environment program.
 ///
 /// The evolution process sends an Individual encoded in UTF-8 JSON on a single
 /// line, immediately followed by the individual's genome as a binary array.
@@ -375,14 +378,14 @@ pub struct Individual {
 
     /// Non-standard fields
     #[serde(flatten)]
-    pub other: HashMap<String, String>,
+    pub extra: HashMap<String, String>,
 }
 
 /// Structure of all messages sent from the environment instances to the evolution process.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
 #[non_exhaustive]
-pub enum Message {
+enum JsonMessage {
     /// Request a new individual from the evolutionary algorithm.
     Spawn {
         #[serde(rename = "Spawn", default)]
@@ -400,6 +403,7 @@ pub enum Message {
     Score {
         #[serde(rename = "Score")]
         value: String,
+        #[serde(default)]
         name: String,
     },
 
@@ -407,12 +411,13 @@ pub enum Message {
     Telemetry {
         #[serde(rename = "Telemetry")]
         info: HashMap<String, String>,
+        #[serde(default)]
         name: String,
     },
 
     /// Report the death of an individual.
     Death {
-        #[serde(rename = "Death")]
+        #[serde(rename = "Death", default)]
         name: String,
     },
 }
@@ -483,7 +488,7 @@ pub struct Environment {
     mode: Mode,
     settings: HashMap<String, String>,
     process: Box<Process>,
-    outstanding: HashMap<String, evo::Individual>,
+    outstanding: HashMap<String, Box<evo::Individual>>,
     stderr: Box<dyn Write>,
 }
 
@@ -539,6 +544,14 @@ impl Environment {
         self.process.is_alive().unwrap_or(false)
     }
 
+    fn forward_stderr(&mut self) -> Result<(), process_anywhere::Error> {
+        let data = self.process.error_bytes()?;
+        if !data.is_empty() {
+            self.stderr.write_all(&data)?;
+        }
+        Ok(())
+    }
+
     /// Get the environment specification argument.
     pub fn get_env_spec(&self) -> &EnvironmentSpec {
         &self.env_spec
@@ -556,14 +569,14 @@ impl Environment {
 
     /// Get all individuals who are currently alive in this environment.
     /// Returns a dictionary indexed by individuals names.
-    pub fn get_outstanding(&self) -> &HashMap<String, evo::Individual> {
+    pub fn get_outstanding(&self) -> &HashMap<String, Box<evo::Individual>> {
         &self.outstanding
     }
 
-    /// Returns a reference to the environment's internal "outstanding"
-    /// dictionary, modifications are permanent.
-    pub fn get_outstanding_mut(&mut self) -> &mut HashMap<String, evo::Individual> {
-        &mut self.outstanding
+    /// Get a mutable reference to a specific outstanding individual,
+    /// modifications are permanent.
+    pub fn get_outstanding_mut(&mut self, name: &str) -> Option<&mut evo::Individual> {
+        self.outstanding.get_mut(name).map(Box::as_mut)
     }
 
     /// Tell the environment program to exit.
@@ -572,102 +585,12 @@ impl Environment {
         self.process.close_stdin().unwrap()
     }
 
-    fn forward_stderr(&mut self) -> Result<(), process_anywhere::Error> {
-        let data = self.process.error_bytes()?;
-        if !data.is_empty() {
-            self.stderr.write_all(&data)?;
-        }
-        Ok(())
-    }
-
-    /// Check for messages from the environment program.
-    ///
-    /// This function is non-blocking and should be called periodically.
-    pub fn poll(&mut self) -> Result<Option<Message>, process_anywhere::Error> {
-        self.forward_stderr()?;
-        // Read the next message or return early.
-        let Some(line) = self.process.recv_line()? else {
-            return Ok(None);
-        };
-        //
-        let mut message: Message = serde_json::from_str(&line).unwrap();
-        // Fill in missing fields.
-        match &mut message {
-            Message::Spawn { population } => {
-                if population.is_empty() {
-                    if self.env_spec.populations.len() == 1 {
-                        *population = self.env_spec.populations[0].name.to_string();
-                    } else {
-                        panic!("missing population");
-                    }
-                }
-            }
-            Message::Score { name, .. } | Message::Telemetry { name, .. } | Message::Death { name, .. } => {
-                if name.is_empty() {
-                    if self.outstanding.len() == 1 {
-                        *name = self.outstanding.keys().next().unwrap().to_string();
-                    } else {
-                        panic!("missing name");
-                    }
-                }
-            }
-            _ => {}
-        }
-        // Process the message if able.
-        if let Message::Score { name, value } = &mut message {
-            let individual = self.outstanding.get_mut(name).unwrap();
-            individual.score = Some(std::mem::take(value));
-            return Ok(None); // consume the message
-        }
-        if let Message::Telemetry { name, info } = &mut message {
-            let individual = self.outstanding.get_mut(name).unwrap();
-            for (k, v) in info.drain() {
-                individual.telemetry.insert(k, v);
-            }
-            return Ok(None); // consume the message
-        }
-        if let Message::Death { name } = &mut message {
-            let individual = self.outstanding.get_mut(name).unwrap();
-            individual.death_date = timestamp();
-        }
-        Ok(Some(message))
-    }
-
-    /// Update the environment.
-    ///
-    /// Argument populations is a dict of evolution API instances, indexed by population name.
-    pub fn evolve(&mut self, evolution: HashMap<String, &dyn evo::API>) -> Result<(), process_anywhere::Error> {
-        let Some(message) = self.poll()? else {
-            return Ok(());
-        };
-        match message {
-            Message::Spawn { population } => {
-                let (individual, genome) = evolution[&population].spawn();
-                self.birth(individual, &genome);
-            }
-            Message::Mate { parents } => {
-                let _mother = self.outstanding.get_mut(&parents[0]).unwrap();
-                let _father = self.outstanding.get_mut(&parents[1]).unwrap();
-                // let individual = mother.mate(father);
-                // self.birth(individual);
-                todo!();
-            }
-            Message::Death { name } => {
-                let individual = self.outstanding.remove(&name).unwrap();
-                evolution[&individual.population].death(individual);
-            }
-            _ => panic!("unrecognized message {message:?}"),
-        }
-        Ok(())
-    }
-
     /// Send an individual to the environment.
     ///
     /// Argument individual is moved to the list of outstanding individuals.
     ///
-    /// Argument genome is sent to the controller, and may differ from the given
-    /// individual's genome.
-    pub fn birth(&mut self, mut individual: evo::Individual, genome: &[u8]) {
+    /// Argument phenome is sent to the controller in place of the individual's genome.
+    pub fn birth(&mut self, mut individual: evo::Individual, phenome: &[u8]) {
         #[derive(Serialize)]
         struct Metadata<'a> {
             name: &'a str,
@@ -681,14 +604,88 @@ impl Environment {
             population: &individual.population,
             parents: &individual.parents,
             controller: &individual.controller,
-            genome: genome.len(),
+            genome: phenome.len(),
         };
         let mut message = serde_json::to_vec(&metadata).unwrap();
         message.push(b'\n');
-        message.extend_from_slice(genome);
+        message.extend_from_slice(phenome);
         self.process.send_bytes(&message).unwrap();
         individual.birth_date = timestamp();
-        self.outstanding.insert(individual.name.to_string(), individual);
+        let name_conflict = self
+            .outstanding
+            .insert(individual.name.to_string(), Box::new(individual));
+        debug_assert!(name_conflict.is_none());
+    }
+
+    /// Check for messages from the environment program.
+    ///
+    /// This function is non-blocking and should be called periodically.
+    pub fn poll(&mut self) -> Result<Option<Message>, process_anywhere::Error> {
+        self.forward_stderr()?;
+        // Read the next message or return early.
+        let Some(line) = self.process.recv_line()? else {
+            return Ok(None);
+        };
+        //
+        let mut message: JsonMessage = serde_json::from_str(&line).unwrap();
+        // Fill in missing fields.
+        match &mut message {
+            JsonMessage::Spawn { population } => {
+                if population.is_empty() {
+                    if self.env_spec.populations.len() == 1 {
+                        *population = self.env_spec.populations[0].name.to_string();
+                    } else {
+                        panic!("missing population");
+                    }
+                }
+            }
+            JsonMessage::Score { name, .. } | JsonMessage::Telemetry { name, .. } | JsonMessage::Death { name, .. } => {
+                if name.is_empty() {
+                    if self.outstanding.len() == 1 {
+                        *name = self.outstanding.keys().next().unwrap().to_string();
+                    } else {
+                        panic!("missing name");
+                    }
+                }
+            }
+            _ => {}
+        }
+        // Check for missing/invalid names.
+        match &message {
+            JsonMessage::Spawn { population } => {
+                assert!(self.env_spec.populations.iter().any(|pop| &pop.name == population));
+            }
+            JsonMessage::Mate { parents } => {
+                assert!(self.outstanding.contains_key(&parents[0]));
+                assert!(self.outstanding.contains_key(&parents[1]));
+            }
+            JsonMessage::Score { name, .. } | JsonMessage::Telemetry { name, .. } | JsonMessage::Death { name, .. } => {
+                assert!(self.outstanding.contains_key(name));
+            }
+        }
+        // Process the message if able.
+        match message {
+            JsonMessage::Score { name, value } => {
+                let individual = self.outstanding.get_mut(&name).unwrap();
+                individual.score = Some(value);
+                Ok(None) // consume the message
+            }
+            JsonMessage::Telemetry { name, mut info } => {
+                let individual = self.outstanding.get_mut(&name).unwrap();
+                for (k, v) in info.drain() {
+                    individual.telemetry.insert(k, v);
+                }
+                Ok(None) // consume the message
+            }
+            JsonMessage::Death { name } => {
+                let mut individual = self.outstanding.remove(&name).unwrap();
+                individual.death_date = timestamp();
+                Ok(Some(Message::Death { individual }))
+            }
+            // Pass other messages through to user.
+            JsonMessage::Spawn { population } => Ok(Some(Message::Spawn { population })),
+            JsonMessage::Mate { parents } => Ok(Some(Message::Mate { parents })),
+        }
     }
 }
 
@@ -696,6 +693,21 @@ impl Drop for Environment {
     fn drop(&mut self) {
         let _ = self.forward_stderr();
     }
+}
+
+/// Environments send these messages to evolutionary algorithms.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Message {
+    /// Request a new individual from the evolutionary algorithm.
+    Spawn { population: String },
+
+    /// Request to mate two individuals.
+    /// Both individuals must still be alive and in the environment.
+    Mate { parents: [String; 2] },
+
+    /// Report the death of an individual.
+    Death { individual: Box<evo::Individual> },
 }
 
 #[cfg(test)]
@@ -734,7 +746,7 @@ mod tests {
                 parents: vec!["1020".to_string(), "1077".to_string()],
                 controller: vec!["/usr/bin/q".to_string()],
                 genome: 456789,
-                other: Default::default(),
+                extra: Default::default(),
             })
             .unwrap(),
             r#"{"name":"1234","population":"pop1","parents":["1020","1077"],"controller":["/usr/bin/q"],"genome":456789}"#
@@ -745,28 +757,28 @@ mod tests {
     #[test]
     fn recv_string() {
         assert_eq!(
-            serde_json::to_string(&Message::Spawn {
+            serde_json::to_string(&JsonMessage::Spawn {
                 population: String::new()
             })
             .unwrap(),
             r#"{"Spawn":""}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Spawn {
+            serde_json::to_string(&JsonMessage::Spawn {
                 population: "pop1".to_string()
             })
             .unwrap(),
             r#"{"Spawn":"pop1"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Mate {
+            serde_json::to_string(&JsonMessage::Mate {
                 parents: ["parent1".to_string(), "parent2".to_string()]
             })
             .unwrap(),
             r#"{"Mate":["parent1","parent2"]}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Score {
+            serde_json::to_string(&JsonMessage::Score {
                 name: "xyz".to_string(),
                 value: "-3.7".to_string(),
             })
@@ -774,7 +786,7 @@ mod tests {
             r#"{"Score":"-3.7","name":"xyz"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Telemetry {
+            serde_json::to_string(&JsonMessage::Telemetry {
                 name: "abcd".to_string(),
                 info: HashMap::new()
             })
@@ -782,11 +794,11 @@ mod tests {
             r#"{"Telemetry":{},"name":"abcd"}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Death { name: String::new() }).unwrap(),
+            serde_json::to_string(&JsonMessage::Death { name: String::new() }).unwrap(),
             r#"{"Death":""}"#
         );
         assert_eq!(
-            serde_json::to_string(&Message::Death {
+            serde_json::to_string(&JsonMessage::Death {
                 name: "abc".to_string()
             })
             .unwrap(),

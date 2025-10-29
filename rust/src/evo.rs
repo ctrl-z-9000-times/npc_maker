@@ -1,5 +1,6 @@
 //! Evolutionary algorithms and supporting tools.
 
+use mate_selection::MateSelection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
@@ -21,16 +22,20 @@ pub struct Individual {
 
     /// Number of individuals who died before this one,
     /// or None if this individual has not yet died.
+    #[serde(default)]
     pub ascension: Option<u64>,
 
     /// Name of the environment that this individual lives in.
+    #[serde(default)]
     pub environment: String,
 
     /// Name of the population that this individual belongs to.
+    #[serde(default)]
     pub population: String,
 
     /// Name or UUID of this individual's species.
     /// Mating may be restricted to individuals of the same species.
+    #[serde(default)]
     pub species: String,
 
     /// Command line invocation of the controller program.
@@ -41,29 +46,37 @@ pub struct Individual {
     pub genome: OnceLock<Arc<[u8]>>,
 
     /// The environmental info dictionary. The environment updates this information.
+    #[serde(default)]
     pub telemetry: HashMap<String, String>,
 
     /// The epigenetic info dictionary. The controller updates this information.
+    #[serde(default)]
     pub epigenome: HashMap<String, String>,
 
     /// Reproductive fitness of this individual, as assessed by the environment.
+    #[serde(default)]
     pub score: Option<String>,
 
     /// Number of cohorts that passed before this individual was born.
+    #[serde(default)]
     pub generation: u64,
 
     /// The names of this individual's parents.
+    #[serde(default)]
     pub parents: Vec<String>,
 
     /// The names of this individual's children.
+    #[serde(default)]
     pub children: Vec<String>,
 
     /// Time of birth, as a UTC timestamp, or an empty string if this individual
     /// has not yet been born.
+    #[serde(default)]
     pub birth_date: String,
 
     /// Time of death, as a UTC timestamp, or an empty string if this individual
     /// has not yet died.
+    #[serde(default)]
     pub death_date: String,
 
     /// Custom / unofficial fields that are saved with the individual.
@@ -267,84 +280,13 @@ impl Individual {
     }
 }
 
-/// Individuals may have custom scores functions with this type signature.
-///
-/// By default the npc_maker will parse the individual's score into a single
-/// floating point number, with a default of -inf for missing or invalid scores.
-pub type ScoreFn = dyn Fn(&Individual) -> f64;
-
-const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
-
-fn call_score_fn(score_fn: Option<&ScoreFn>, individual: &Arc<Mutex<Individual>>) -> f64 {
-    let individual = individual.lock().unwrap();
-    if let Some(score_fn) = score_fn {
-        score_fn(&individual)
-    } else if let Some(score) = &individual.score {
-        score.parse().unwrap_or(DEFAULT_SCORE)
-    } else {
-        DEFAULT_SCORE
-    }
-}
-
-fn compare_scores(
-    score_fn: Option<&ScoreFn>,
-) -> impl Fn(&Arc<Mutex<Individual>>, &Arc<Mutex<Individual>>) -> std::cmp::Ordering {
-    move |a, b| {
-        let a_score = call_score_fn(score_fn, a);
-        let b_score = call_score_fn(score_fn, b);
-        a_score.total_cmp(&b_score).reverse()
-    }
-}
-
-// TOOD: Consider introducing a mutex lock into the population so that
-// Population.add() is immutable. This would allow finer grained locking.
-// Then move the file-system tasks out of the mutex-locked critical section.
-//
-// Psuedo Code:
-//
-// fn add(&self, individual) {
-//      1) individual.save()
-//      2) lock mutex
-//      3) reckon the population
-//      4) release mutex
-//      5) delete individuals
-//
-
-/// A group of individuals.
-///
-/// This manages an evolving population of individuals, featuring:
-/// * Serveral strategies for replacing individuals with new ones,
-/// * Persistant populations that are saved to file,
-/// * And a Leaderboard and Hall of Fame.
-pub struct Population {
-    path: PathBuf,
-
-    replacement: Replacement,
-
-    population_size: usize,
-
-    leaderboard_size: usize,
-
-    hall_of_fame_size: usize,
-
-    score_fn: Option<Box<ScoreFn>>,
-
-    ascension: u64,
-
-    generation: u64,
-
-    members: Vec<Arc<Mutex<Individual>>>,
-
-    waiting: Vec<Arc<Mutex<Individual>>>,
-
-    leaderboard: Vec<Arc<Mutex<Individual>>>,
-
-    hall_of_fame: Vec<Arc<Mutex<Individual>>>,
-}
-
 /// Controls how a population replaces its members once it's full.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Replacement {
+    /*
+    /// Do not add or remove members.
+    Frozen,
+    */
     /// Do not replace members. The population grows without bounds.
     Unbounded,
 
@@ -361,8 +303,109 @@ pub enum Replacement {
     Generation,
 }
 
+/// Evolutionary algorithms choose which parent to reproduce with this
+/// user-supplied function.
+///
+/// The first argument is the current mating population.
+///
+/// The second argument is the requested number of children to be spawned.
+///
+/// Returns a list of parent groups, where each parent group is a list of
+/// parents to be mated together. The caller should take the following action
+/// depending on how many unique parents are in a group.
+///
+/// | Parents | Action |
+/// | --- | --- |
+/// | 0 | Use the initial genetic material |
+/// | 1 | Asexually reproduce the parent |
+/// | 2 | Sexually reproduce the parents |
+/// | 3+ | Unspecified |
+///
+pub type Selection = dyn Fn(&[Arc<Mutex<Individual>>], usize) -> Vec<Vec<Arc<Mutex<Individual>>>> + Send;
+
+/// Individuals may have custom scores functions with this type signature.
+///
+/// By default the npc_maker will parse the individual's score field into a single
+/// floating point number, with a default of -inf for missing or invalid scores.
+pub type Score = dyn Fn(&Individual) -> f64 + Send + Sync;
+
+const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
+
+fn default_score(individual: &Individual) -> f64 {
+    if let Some(score) = &individual.score {
+        score.parse().unwrap_or(DEFAULT_SCORE)
+    } else {
+        DEFAULT_SCORE
+    }
+}
+
+fn compare_scores(score_fn: &Score) -> impl Fn(&Arc<Mutex<Individual>>, &Arc<Mutex<Individual>>) -> std::cmp::Ordering {
+    move |a, b| {
+        let a_score = score_fn(&a.lock().unwrap());
+        let b_score = score_fn(&b.lock().unwrap());
+        a_score.total_cmp(&b_score).reverse()
+    }
+}
+
+// TOOD: Consider introducing a mutex lock into the population so that
+// Evolution.spawn() and Evolution.death() are immutable. This would allow finer
+// grained locking: move the file-system tasks out of the mutex-locked critical
+// section.
+//
+// Pseudo Code:
+//
+// fn spawn(&self)
+//      1) lock mutex
+//      2) refill parents queue if empty
+//      3) pop & return parent group
+//      4) release mutex
+//
+// fn death(&self, individual)
+//      1) individual.save()
+//      2) lock mutex
+//      3) reckon the population
+//      4) release mutex
+//      5) delete individuals
+//
+
+/// Container for an evolving population of individuals.
+///
+/// Features:
+/// * Several strategies for replacing individuals with new ones,
+/// * Persistence by saving to file,
+/// * A Leaderboard and Hall of Fame.
+pub struct Evolution {
+    path: PathBuf,
+
+    replacement: Replacement,
+
+    selection: Arc<Selection>,
+
+    score: Arc<Score>,
+
+    population_size: usize,
+
+    leaderboard_size: usize,
+
+    hall_of_fame_size: usize,
+
+    ascension: u64,
+
+    generation: u64,
+
+    members: Vec<Arc<Mutex<Individual>>>,
+
+    waiting: Vec<Arc<Mutex<Individual>>>,
+
+    leaderboard: Vec<Arc<Mutex<Individual>>>,
+
+    hall_of_fame: Vec<Arc<Mutex<Individual>>>,
+
+    parents: Vec<Vec<Arc<Mutex<Individual>>>>,
+}
+
 #[derive(Serialize, Deserialize)]
-struct PopulationMetadata {
+struct EvolutionMetadata {
     ascension: u64,
     generation: u64,
     members: Vec<String>,
@@ -371,16 +414,36 @@ struct PopulationMetadata {
     hall_of_fame: Vec<String>,
 }
 
-impl Population {
+impl Evolution {
+    /// Argument path is a directory where this will save the population to.
+    /// If path is an empty string, a temporary directory will be created.
     ///
+    /// Argument replacement controls how new members are added once the size of
+    /// the population reaches the population_size argument.
+    ///
+    /// Argument selection controls which individuals are allowed to mate and
+    /// with whom.
+    ///
+    /// Argument score is an optional custom scoring function.
+    ///
+    /// Argument population_size controls the total size of the mating
+    /// population.
+    ///
+    /// Argument leaderboard_size is the number of the best scoring individuals
+    /// to save in perpetuity. Set to zero to disable the leaderboard.
+    ///
+    /// Argument hall_of_fame_size is the number of individuals from each
+    /// generation to induct in to the hall of fame. Set to zero to disable the
+    /// hall of fame.
     pub fn new(
         path: impl AsRef<Path>,
-        replacement: Replacement,
+        replacement: Option<Replacement>,
+        selection: Option<Arc<Selection>>,
+        score: Option<Arc<Score>>,
         population_size: usize,
         leaderboard_size: usize,
         hall_of_fame_size: usize,
-        score_fn: Option<Box<ScoreFn>>,
-    ) -> Result<Population, Error> {
+    ) -> Result<Evolution, Error> {
         let mut path = path.as_ref().to_path_buf();
         // Fill in empty path with temp dir.
         if path.to_str() == Some("") {
@@ -390,26 +453,48 @@ impl Population {
         if !path.exists() {
             std::fs::create_dir(&path)?;
         }
-        let mut this = Population {
+        //
+        let score = score.unwrap_or_else(|| Arc::new(default_score));
+        //
+        let selection = selection.unwrap_or_else(|| {
+            const MEDIAN_PERCENT: f64 = 0.1;
+            let median = (population_size as f64 * MEDIAN_PERCENT).round() as usize;
+            let score_fn = score.clone();
+            Arc::new(move |population, spawn| {
+                let rng = &mut rand::rng();
+                let scores: Vec<f64> = population
+                    .iter()
+                    .map(|individual| score_fn(&individual.lock().unwrap()))
+                    .collect();
+                let index = mate_selection::RankedExponential(median).pairs(rng, spawn, scores);
+                index
+                    .iter()
+                    .map(|parents| parents.iter().map(|&i| population[i].clone()).collect())
+                    .collect()
+            })
+        });
+        let mut this = Evolution {
             path,
-            replacement,
+            replacement: replacement.unwrap_or(Replacement::Generation),
+            selection,
+            score,
             population_size,
             leaderboard_size,
             hall_of_fame_size,
-            score_fn,
             ascension: 0,
             generation: 0,
             members: Default::default(),
             waiting: Default::default(),
             leaderboard: Default::default(),
             hall_of_fame: Default::default(),
+            parents: vec![],
         };
         this.load()?;
         Ok(this)
     }
     fn save(&self) -> Result<(), Error> {
         let get_name = |indiv: &Arc<Mutex<Individual>>| indiv.lock().unwrap().name.clone();
-        let metadata = PopulationMetadata {
+        let metadata = EvolutionMetadata {
             ascension: self.ascension,
             generation: self.generation,
             members: self.members.iter().map(get_name).collect(),
@@ -426,7 +511,7 @@ impl Population {
         if !path.exists() {
             return Ok(());
         }
-        let metadata: PopulationMetadata = serde_json::from_slice(&std::fs::read(&path)?).unwrap();
+        let metadata: EvolutionMetadata = serde_json::from_slice(&std::fs::read(&path)?).unwrap();
         self.ascension = metadata.ascension;
         self.generation = metadata.generation;
         //
@@ -440,7 +525,7 @@ impl Population {
         self.leaderboard = metadata.leaderboard.iter().map(lookup).collect();
         self.hall_of_fame = metadata.hall_of_fame.iter().map(lookup).collect();
         // Sort the historical data to enforce invariants.
-        self.leaderboard.sort_by(compare_scores(self.score_fn.as_deref()));
+        self.leaderboard.sort_by(compare_scores(self.score.as_ref()));
         self.hall_of_fame
             .sort_by_key(|x| x.lock().unwrap().ascension.unwrap_or(u64::MAX));
         Ok(())
@@ -482,8 +567,26 @@ impl Population {
     pub fn get_hall_of_fame(&self) -> &[Arc<Mutex<Individual>>] {
         &self.hall_of_fame
     }
+    /// Get a list of parents to be mated together to produce a child.
+    pub fn spawn(&mut self) -> Vec<Arc<Mutex<Individual>>> {
+        // Refill parents buffer.
+        if self.parents.is_empty() {
+            let num_pairs = if self.get_replacement() == Replacement::Generation {
+                self.get_population_size()
+            } else {
+                1
+            };
+            let members = self.get_members();
+            self.parents.extend_from_slice(&(*self.selection)(members, num_pairs));
+        }
+        let mut parents = self.parents.pop().unwrap();
+        // Deduplicate the parents list.
+        parents.sort_unstable_by_key(Arc::as_ptr);
+        parents.dedup_by_key(|parent| Arc::as_ptr(parent));
+        parents
+    }
     /// Add a new individual to this population.
-    pub fn add(&mut self, mut individual: Individual) -> Result<Arc<Mutex<Individual>>, Error> {
+    pub fn death(&mut self, mut individual: Individual) -> Result<(), Error> {
         debug_assert!(individual.ascension.is_none());
         individual.ascension = Some(self.ascension);
         self.ascension += 1;
@@ -502,7 +605,7 @@ impl Population {
                 }
             }
             Replacement::Worst => {
-                let compare_scores = compare_scores(self.score_fn.as_deref());
+                let compare_scores = compare_scores(self.score.as_ref());
                 while !self.members.is_empty() && self.members.len() >= self.population_size {
                     let (worst_index, _worst_individual) = self
                         .members
@@ -539,9 +642,12 @@ impl Population {
         if self.waiting.len() >= self.population_size {
             self.rollover()?;
         }
-        Ok(individual)
+        Ok(())
     }
-    ///
+    /// Force the next generation to replace the current generation, even if the
+    /// next generation has not reached the population_size. This is useful for
+    /// seeding a population with it initial genetic material and then making
+    /// the seed material immediately available by calling this method.
     pub fn rollover(&mut self) -> Result<(), Error> {
         self.rollover_leaderboard()?;
         self.rollover_hall_of_fame()?;
@@ -553,9 +659,9 @@ impl Population {
         if self.leaderboard_size == 0 {
             return Ok(());
         }
-        let score_fn = self.score_fn.as_deref();
         let min_score = if self.leaderboard.len() >= self.leaderboard_size {
-            call_score_fn(score_fn, self.leaderboard.last().unwrap())
+            let individual = self.leaderboard.last().unwrap();
+            (*self.score)(&individual.lock().unwrap())
         } else {
             f64::NEG_INFINITY
         };
@@ -563,11 +669,11 @@ impl Population {
         self.leaderboard.extend(
             self.waiting
                 .iter()
-                .filter(|individual| call_score_fn(score_fn, individual) > min_score)
+                .filter(|individual| (*self.score)(&individual.lock().unwrap()) > min_score)
                 .cloned(),
         );
         // Use stable sort to preserve ascension ordering.
-        self.leaderboard.sort_by(compare_scores(score_fn));
+        self.leaderboard.sort_by(compare_scores(self.score.as_ref()));
         // Remove low performing individuals from the leaderboard directory.
         if self.leaderboard.len() > self.leaderboard_size {
             for individual in self.leaderboard.drain(self.leaderboard_size..) {
@@ -581,7 +687,7 @@ impl Population {
         let n = self.hall_of_fame_size.min(self.waiting.len() - 1);
         // This should be a stable sort but std does not support it.
         self.waiting
-            .select_nth_unstable_by(n, compare_scores(self.score_fn.as_deref()));
+            .select_nth_unstable_by(n, compare_scores(self.score.as_ref()));
         let winners = &mut self.waiting[..n];
         winners.sort_unstable_by_key(|individual| individual.lock().unwrap().ascension);
         self.hall_of_fame.extend_from_slice(winners);
@@ -598,125 +704,6 @@ impl Population {
             Individual::drop(individual)?;
         }
         Ok(())
-    }
-}
-
-/// Interface for evolutionary algorithms.
-pub trait API {
-    /// Get a new individual to be born into an environment.
-    ///
-    /// Returns an individual and a genome for the controller, which may differ
-    /// from the individual's genome.
-    fn spawn(&self) -> (Individual, Box<[u8]>);
-
-    /// Notification of an individual's death.
-    fn death(&self, individual: Individual);
-}
-
-pub struct Evolution {
-    inner: Mutex<Inner>,
-
-    mate_selection: Box<MateSelection>,
-
-    mate_genomes: Box<GenomeSex>,
-}
-
-struct Inner {
-    population: Population,
-
-    generation: u64,
-
-    parents: Vec<(Arc<Mutex<Individual>>, Arc<Mutex<Individual>>)>,
-}
-
-///
-pub type MateSelection = dyn mate_selection::MateSelection<rand::rngs::ThreadRng>;
-
-/// Callback for asexually reproducing a genome.
-///
-/// Returns a pair of (genome, phenome)
-pub type GenomeAsex = dyn Fn(&[u8]) -> (Box<[u8]>, Box<[u8]>);
-
-/// Callback for sexually reproducing two genomes.
-///
-/// Returns a pair of (genome, phenome)
-pub type GenomeSex = dyn Fn(&[u8], &[u8]) -> (Box<[u8]>, Box<[u8]>);
-
-impl Evolution {
-    ///
-    pub fn new(
-        population: Population,
-        mate_selection: Box<MateSelection>,
-        mate_genomes: Box<GenomeSex>,
-    ) -> Result<Self, Error> {
-        let generation = population.get_generation();
-        Ok(Self {
-            inner: Mutex::from(Inner {
-                population,
-                generation,
-                parents: vec![],
-            }),
-            mate_selection,
-            mate_genomes,
-        })
-    }
-    pub fn into_inner(self) -> Population {
-        self.inner.into_inner().unwrap().population
-    }
-    pub fn get_generation(&self) -> u64 {
-        self.inner.lock().unwrap().generation
-    }
-}
-impl API for Evolution {
-    fn spawn(&self) -> (Individual, Box<[u8]>) {
-        let rng = &mut rand::rng();
-        // Lock and unpack this structure.
-        let mut inner = self.inner.lock().unwrap();
-        let Inner {
-            population,
-            generation,
-            parents,
-        } = &mut *inner;
-        // Check for rollover event.
-        if *generation != population.get_generation() {
-            parents.clear();
-            *generation = population.get_generation();
-        }
-        // Refill parents buffer.
-        if parents.is_empty() {
-            let num_pairs = if population.get_replacement() == Replacement::Generation {
-                population.get_population_size()
-            } else {
-                1
-            };
-            let members = population.get_members();
-            let score_fn = |indivdiual| call_score_fn(population.score_fn.as_deref(), indivdiual);
-            let scores = members.iter().map(score_fn).collect::<Vec<f64>>();
-            let pairs = self.mate_selection.pairs(rng, num_pairs, scores);
-            let members = population.get_members();
-            for [index1, index2] in pairs {
-                let parent1 = members[index1].clone();
-                let parent2 = members[index2].clone();
-                parents.push((parent1, parent2));
-            }
-        }
-        // Get and mate parents.
-        let (parent1, parent2) = parents.pop().unwrap();
-        drop(inner);
-        if Arc::as_ptr(&parent1) == Arc::as_ptr(&parent2) {
-            let mut parent1 = parent1.lock().unwrap();
-            let (genome, phenome) = (self.mate_genomes)(&parent1.genome(), &parent1.genome());
-            (parent1.asex(&genome), phenome)
-        } else {
-            let mut parent1 = parent1.lock().unwrap();
-            let mut parent2 = parent2.lock().unwrap();
-            let (genome, phenome) = (self.mate_genomes)(&parent1.genome(), &parent2.genome());
-            (parent1.sex(&mut parent2, &genome), phenome)
-        }
-    }
-    fn death(&self, individual: Individual) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.population.add(individual).unwrap();
     }
 }
 
@@ -748,17 +735,17 @@ mod tests {
     }
     #[test]
     fn pop_save_load() {
-        let mut pop1 = Population::new("", Replacement::Generation, 10, 3, 2, None).unwrap();
+        let mut pop1 = Evolution::new("", None, None, None, 10, 3, 2).unwrap();
 
         for _ in 0..30 {
             let mut genome = Box::new(*b"beepboop");
             rand::fill(&mut genome[..]);
             let mut indiv = Individual::new("foo", "bar", &["ctrl", "prog"], genome);
             indiv.score = Some(rand::random::<f64>().to_string());
-            pop1.add(indiv).unwrap();
+            pop1.death(indiv).unwrap();
         }
         pop1.save().unwrap();
-        let pop2 = Population::new(pop1.get_path(), Replacement::Generation, 10, 3, 2, None).unwrap();
+        let pop2 = Evolution::new(pop1.get_path(), None, None, None, 10, 3, 2).unwrap();
         assert_eq!(pop1.get_path(), pop2.get_path());
         assert_eq!(pop1.get_ascension(), pop2.get_ascension());
         assert_eq!(pop1.get_generation(), pop2.get_generation());
@@ -788,16 +775,19 @@ mod tests {
                 .collect::<Vec<u8>>()
                 .into_boxed_slice()
         }
-        fn mate_fn(a: &[u8], b: &[u8]) -> (Box<[u8]>, Box<[u8]>) {
+        fn mate_fn(a: &[u8], b: &[u8]) -> Box<[u8]> {
             let n = a.len();
             let crossover = rand::random_range(0..n);
             let mut c = vec![];
             c.extend_from_slice(&a[0..crossover]);
             c.extend_from_slice(&b[crossover..n]);
+            mutate_fn(&mut c);
+            c.into_boxed_slice()
+        }
+        fn mutate_fn(x: &mut [u8]) {
             if rand::random_bool(0.5) {
-                c[rand::random_range(0..n)] = rand::random();
+                x[rand::random_range(0..x.len())] = rand::random();
             }
-            (c.clone().into_boxed_slice(), c.into_boxed_slice())
         }
         fn eval(a: &[u8], b: &[u8]) -> String {
             let abs_dif = a.iter().zip(b).map(|(&x, &y)| (x as f64 - y as f64).abs()).sum::<f64>();
@@ -808,19 +798,34 @@ mod tests {
         let seed_score = eval(&seed_genome, &target_genome);
         let mut seed = Individual::new("", "", &[], seed_genome);
         seed.score = Some(seed_score);
-        let mut pop = Population::new("", Replacement::Generation, 100, 3, 1, None).unwrap();
-        pop.add(seed).unwrap();
-        pop.rollover().unwrap();
-        let evo = Evolution::new(pop, Box::new(mate_selection::RankedExponential(5)), Box::new(mate_fn)).unwrap();
-        while evo.inner.lock().unwrap().population.get_generation() < 20 {
-            let (mut x, y) = evo.spawn();
-            x.score = Some(eval(&y, &target_genome));
-            evo.death(x);
+        let mut evo = Evolution::new("", None, None, None, 100, 3, 1).unwrap();
+        evo.death(seed).unwrap();
+        evo.rollover().unwrap();
+        while evo.get_generation() < 20 {
+            let mut parents = evo.spawn();
+            let mut child = if parents.len() == 1 {
+                let mom = parents.pop().unwrap();
+                let mut mom = mom.lock().unwrap();
+                let mut genome: Vec<u8> = mom.genome().iter().cloned().collect();
+                mutate_fn(&mut genome);
+                Individual::asex(&mut mom, &genome)
+            } else if parents.len() == 2 {
+                let mom = parents.pop().unwrap();
+                let dad = parents.pop().unwrap();
+                let mut mom = mom.lock().unwrap();
+                let mut dad = dad.lock().unwrap();
+                let genome = mate_fn(&mom.genome(), &dad.genome());
+                Individual::sex(&mut mom, &mut dad, &genome)
+            } else {
+                panic!()
+            };
+            child.score = Some(eval(&child.genome(), &target_genome));
+            evo.death(child).unwrap();
         }
-        for indiv in evo.inner.lock().unwrap().population.get_hall_of_fame() {
+        for indiv in evo.get_hall_of_fame() {
             println!("{}", indiv.lock().unwrap().score.as_ref().unwrap());
         }
-        let best = evo.inner.lock().unwrap().population.get_leaderboard()[0].clone();
+        let best = evo.get_leaderboard()[0].clone();
         assert!(best.lock().unwrap().score.as_ref().unwrap().parse::<f64>().unwrap() > -100.0);
     }
 }

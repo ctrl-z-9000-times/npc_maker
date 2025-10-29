@@ -11,7 +11,7 @@ operate on genomes.
 Individuals are stored in a standard file format. An individual consist of a
 genome and a bundle of metadata. The genome is stored as a binary blob; the
 metadata is stored as a JSON object. Individuals are required to have a name,
-controller, and genome, everything else is optional. Unexpected JSON attributes
+controller, and genome; everything else is optional. Unexpected JSON attributes
 are allowed and accessible through the python and rust APIs. The following
 table defines the standard metadata attributes:
 
@@ -41,32 +41,79 @@ Individual files always named after the individual, and with the file extension 
 
 ## The Evolution API ##
 
-The evolution API defines a service which gives out individuals upon request.
-Each instance of the evolution API is responsible for exactly one population, so
-environments with multiple populations will need multiple instances. Each
-population evolves independently. One instance can serve multiple environments.
+The purpose of the evolutionary algorithm is to pick which individuals to
+reproduce. The evolution API has two methods: spawn and death, which mark the
+beginning and end of an individual's life cycle.
 
-The evolution API has two methods: spawn and death, which mark the beginning and
-end of an individual's life cycle.
+One instance of the evolution API can serve multiple environments.
+Each instance of the API is responsible for exactly one population, so
+environments with multiple populations will need multiple instances.
 
 
 ### Spawn ###
 
-The spawn method generates new individuals. It may create genomes by any method
-it sees fit.
+_method signature:_ `evolution.spawn(self) -> [individual]`
 
-_method signature:_ `evolution.spawn(self) -> individual`
+The spawn method returns a list of parent individuals to be mated together to
+produce a child. Depending on how many parents are returned take the following
+actions:
+
+| Parents | Action |
+| --- | --- |
+| 0 | Use the initial genetic material |
+| 1 | Asexually reproduce the parent |
+| 2 | Sexually reproduce the parents |
+| 3+ | Unspecified |
 
 
 ### Death ###
 
-The death method notifies the evolutionary algorithm that an individual that it
-spawned has died. Environments should call this method when an AI agent dies.
-
 _method signature:_ `evolution.death(self, individual)`
 
-The death method can assume that all of the individuals it is given were
-produced by the same instance's birth method. The birth method can **not**
-assume that all of the individuals it produces will eventually be given to the
-death method.
+The death method notifies the evolutionary algorithm that an individual has died.
+
+
+## The Genetics API ##
+
+Whereas the evolutionary algorithm decides which individuals to reproduce, the
+genetics module reproduces the genomes. The word "**genome**" refers a complete
+set of parameters for creating an AI agent. Each individual has exactly one
+immutable genome. When an individual is born into an environment its genome is
+converted into a "**phenome**" before transmission to the control system.
+
+The genetics API is not well defined because it is too tightly coupled with the
+user's evolutionary algorithm. The experimental setup will determine which
+functions are required, and additional functions may be necessary. The genetics
+API defines the following functions:
+
+
+### asex ###
+
+_function signature:_ `asex(parent_genome) -> (child_genome, child_phenome)`
+
+This function asexually reproduces a genome. It should create a copy of the
+given genome and apply mutations.
+
+
+### sex ###
+
+_function signature:_ `sex(parent_1_genome, parent_2_genome) -> (child_genome, child_phenome)`
+
+This function sexually reproduces two genomes. It should apply crossover to
+combine the given genomes and then apply mutations.
+
+
+### phenome ###
+
+_function signature:_ `phenome(parent_genome) -> child_phenome`
+
+Package the genome into a binary object in preparation for sending it to the
+control system.
+
+
+### distance ###
+
+_function signature:_ `distance(parent_1_genome, parent_2_genome) -> f64`
+
+Used by the NEAT algorithm for artificial speciation.
 
