@@ -39,6 +39,7 @@ pub struct Individual {
     pub species: String,
 
     /// Command line invocation of the controller program.
+    #[serde(default)]
     pub controller: Vec<String>,
 
     /// Genetic parameters for this individual.
@@ -321,7 +322,7 @@ pub enum Replacement {
 /// | 2 | Sexually reproduce the parents |
 /// | 3+ | Unspecified |
 ///
-pub type Selection = dyn Fn(&[Arc<Mutex<Individual>>], usize) -> Vec<Vec<Arc<Mutex<Individual>>>> + Send;
+pub type Selection = dyn Fn(&[Arc<Mutex<Individual>>], usize) -> Vec<Vec<Arc<Mutex<Individual>>>> + Send + Sync;
 
 /// Individuals may have custom scores functions with this type signature.
 ///
@@ -343,7 +344,13 @@ fn compare_scores(score_fn: &Score) -> impl Fn(&Arc<Mutex<Individual>>, &Arc<Mut
     move |a, b| {
         let a_score = score_fn(&a.lock().unwrap());
         let b_score = score_fn(&b.lock().unwrap());
-        a_score.total_cmp(&b_score).reverse()
+        match (a_score.is_nan(), b_score.is_nan()) {
+            (false, false) => a_score.total_cmp(&b_score),
+            (true, true) => a_score.total_cmp(&b_score),
+            (false, true) => std::cmp::Ordering::Greater,
+            (true, false) => std::cmp::Ordering::Less,
+        }
+        .reverse()
     }
 }
 
@@ -656,7 +663,7 @@ impl Evolution {
         Ok(())
     }
     fn rollover_leaderboard(&mut self) -> Result<(), Error> {
-        if self.leaderboard_size == 0 {
+        if self.leaderboard_size == 0 || self.waiting.is_empty() {
             return Ok(());
         }
         let min_score = if self.leaderboard.len() >= self.leaderboard_size {
@@ -683,6 +690,9 @@ impl Evolution {
         Ok(())
     }
     fn rollover_hall_of_fame(&mut self) -> Result<(), Error> {
+        if self.hall_of_fame_size == 0 || self.waiting.is_empty() {
+            return Ok(());
+        }
         // Find the highest scoring individuals in the new generation.
         let n = self.hall_of_fame_size.min(self.waiting.len() - 1);
         // This should be a stable sort but std does not support it.
@@ -766,6 +776,32 @@ mod tests {
         assert_eq!(pop2.get_members().len(), 10);
         assert_eq!(pop2.get_leaderboard().len(), 3);
         assert_eq!(pop2.get_hall_of_fame().len(), 6);
+    }
+    #[test]
+    fn compare_scores() {
+        use rand::seq::SliceRandom;
+        let rng = &mut rand::rng();
+        // Make some individuals with random scores.
+        let mut individuals = vec![];
+        for index in 0..30 {
+            let mut indiv = Individual::new("foo", "bar", &["ctrl", "prog"], Box::new(*b""));
+            indiv.score = Some(index.to_string());
+            individuals.push(Arc::new(Mutex::new(indiv)));
+        }
+        for index in 5..10 {
+            individuals[index].lock().unwrap().score = Some("corrupt".to_string());
+        }
+        for index in 10..15 {
+            individuals[index].lock().unwrap().score = Some(f64::NAN.to_string());
+        }
+        //
+        individuals.shuffle(rng);
+        individuals.sort_by(super::compare_scores(&default_score));
+        //
+        for index in 0..20 {
+            let score = default_score(&individuals[index].lock().unwrap());
+            assert!(dbg!(score) >= 0.0);
+        }
     }
     #[test]
     fn evo() {

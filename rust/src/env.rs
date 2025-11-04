@@ -388,7 +388,7 @@ pub struct Individual {
 enum JsonMessage {
     /// Request a new individual from the evolutionary algorithm.
     Spawn {
-        #[serde(rename = "Spawn", default)]
+        #[serde(rename = "Spawn")]
         population: String,
     },
 
