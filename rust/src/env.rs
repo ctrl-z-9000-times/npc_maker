@@ -416,7 +416,7 @@ pub fn mate(parent1: &str, parent2: &str) {
 
 /// Report an individual's score or reproductive fitness to the evolutionary algorithm.
 ///
-/// This should be called *before* calling [death] on the individual.
+/// This should be called *before* calling [death()] with the individual.
 ///
 /// Argument individual is optional (use empty string) if the environment
 /// contains exactly one individual.

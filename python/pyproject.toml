@@ -6,6 +6,7 @@
         { name = "David McDougall", email = "dam1784@rit.edu" },
     ]
     description = "Evolve AIs in simulated environments"
+    readme = "README.md"
     classifiers = [
         "Natural Language :: English",
         "Operating System :: OS Independent",
