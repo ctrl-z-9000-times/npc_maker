@@ -18,11 +18,11 @@ fn timestamp() -> String {
     use chrono::{SecondsFormat, Utc};
     let rfc3339 = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, false);
     // Replace the 'T' separator with a space.
-    rfc3339.replacen("T", " ", 1)
+    rfc3339.replacen('T', " ", 1)
 }
 
-/// Static description of an environment and its interfaces.  
-/// Each environment specification file contains one of these.  
+/// Static description of an environment and its interfaces. \
+/// Each environment specification file contains one of these.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EnvironmentSpec {
     /// Filesystem path to the environment’s static specification (this file).
@@ -66,34 +66,14 @@ impl EnvironmentSpec {
 
     fn normalize_path(&mut self) {
         if self.path.is_relative() {
-            self.path = self.spec.parent().unwrap().join(&self.path)
+            self.path = self.spec.parent().unwrap().join(&self.path);
         }
         // assert!(self.path.exists(), "file not found {:?}", self.path);
         // assert!(self.path.is_file(), "not a file {:?}", self.path);
     }
-
-    pub fn get_args(&self, graphical: bool, settings: &HashMap<String, String>) -> Vec<String> {
-        // Setup the program's command line invocation and marshal its arguments.
-        let mut args: Vec<String> = vec![
-            self.path.to_str().unwrap().to_string(),
-            self.spec.to_str().unwrap().to_string(),
-            (if graphical { "graphical" } else { "headless" }).to_string(),
-        ];
-        args.reserve(2 * self.settings.len());
-        for parameter in &self.settings {
-            let name = parameter.name();
-            let value = match settings.get(name) {
-                Some(r#override) => r#override.clone(),
-                None => parameter.default(),
-            };
-            args.push(name.to_string());
-            args.push(value);
-        }
-        args
-    }
 }
 
-/// Description for each specific population within an environment.
+/// Description for each type of organism within an environment.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PopulationSpec {
     /// Name of the population, must be unique within the environment.
@@ -199,20 +179,20 @@ impl SettingsSpec {
     /// Name of this settings menu item, must be unique within the environment.
     pub fn name(&self) -> &str {
         match self {
-            Self::Real { name, .. } => name,
-            Self::Integer { name, .. } => name,
-            Self::Boolean { name, .. } => name,
-            Self::Enumeration { name, .. } => name,
+            Self::Real { name, .. }
+            | Self::Integer { name, .. }
+            | Self::Boolean { name, .. }
+            | Self::Enumeration { name, .. } => name,
         }
     }
 
     /// User facing documentation message.
     pub fn description(&self) -> &str {
         match self {
-            Self::Real { description, .. } => description,
-            Self::Integer { description, .. } => description,
-            Self::Boolean { description, .. } => description,
-            Self::Enumeration { description, .. } => description,
+            Self::Real { description, .. }
+            | Self::Integer { description, .. }
+            | Self::Boolean { description, .. }
+            | Self::Enumeration { description, .. } => description,
         }
     }
 
@@ -246,10 +226,9 @@ pub enum Mode {
 
     /// Display graphical output to the user.
     ///
-    /// This mode is for demonstrations and so the environment should run in as
-    /// close to real time as possible and with full user interactivity enabled.
-    ///
-    /// The environment may also print diagnostic information to stderr.
+    /// This mode is for demonstrations. The environment should run in real time
+    /// and with user interactivity enabled. The environment may also print
+    /// extra diagnostic information to stderr.
     #[default]
     Graphical,
 }
@@ -277,8 +256,8 @@ impl FromStr for Mode {
 }
 
 impl From<bool> for Mode {
-    /// Converts false to headless,  
-    /// Converts true to graphical.  
+    /// Converts [false] to [Mode::Headless], \
+    /// Converts [true] to [Mode::Graphical].
     fn from(mode: bool) -> Self {
         if mode {
             Mode::Graphical
@@ -495,16 +474,16 @@ pub struct Environment {
 impl Environment {
     /// Start running an environment program.
     ///
-    /// Argument computer is the hardware address to execute the environment on.
+    /// Argument `computer` is the hardware address to execute the environment on.
     ///
-    /// Argument env_spec is the environment specification.
+    /// Argument `env_spec` is the environment specification.
     ///
-    /// Argument mode controls whether the environment shows graphical output.
+    /// Argument `mode` controls whether the environment shows graphical output.
     ///
-    /// Argument settings is a dict of command line arguments for the environment process.
+    /// Argument `settings` is a dict of command line arguments for the environment process.
     ///          These must match what is listed in the environment specification.
     ///
-    /// Argument stderr is the file descriptor to use for the subprocess's stderr channel.
+    /// Argument `stderr` is the file descriptor to use for the subprocess's stderr channel.
     ///          By default, the controller will inherit this process's stderr channel.
     pub fn new(
         computer: Arc<Computer>,
@@ -515,11 +494,10 @@ impl Environment {
     ) -> Self {
         let stderr = stderr.unwrap_or_else(|| Box::new(io::stderr()));
         // Assemble the command line invocation.
-        let mut command = vec![
-            env_spec.path.as_os_str().to_str().unwrap().into(),
-            env_spec.spec.as_os_str().to_str().unwrap().into(),
-            mode.to_string(),
-        ];
+        let mut command = Vec::with_capacity(3 + 2 * env_spec.settings.len());
+        command.push(env_spec.path.to_str().unwrap().to_string());
+        command.push(env_spec.spec.to_str().unwrap().to_string());
+        command.push(mode.to_string());
         for arg in env_spec.settings.iter() {
             command.push(arg.name().to_string());
             if let Some(value) = settings.get(arg.name()) {
@@ -557,12 +535,12 @@ impl Environment {
         &self.env_spec
     }
 
-    /// Get the output display "mode" argument.
+    /// Get the output display `mode` argument.
     pub fn get_mode(&self) -> Mode {
         self.mode
     }
 
-    /// Get the "settings" argument.
+    /// Get the `settings` argument.
     pub fn get_settings(&self) -> &HashMap<String, String> {
         &self.settings
     }
@@ -573,8 +551,7 @@ impl Environment {
         &self.outstanding
     }
 
-    /// Get a mutable reference to a specific outstanding individual,
-    /// modifications are permanent.
+    /// Get a mutable reference to a specific outstanding individual.
     pub fn get_outstanding_mut(&mut self, name: &str) -> Option<&mut evo::Individual> {
         self.outstanding.get_mut(name).map(Box::as_mut)
     }
@@ -582,7 +559,7 @@ impl Environment {
     /// Tell the environment program to exit.
     pub fn quit(&mut self) {
         self.forward_stderr().unwrap();
-        self.process.close_stdin().unwrap()
+        self.process.close_stdin().unwrap();
     }
 
     /// Send an individual to the environment.

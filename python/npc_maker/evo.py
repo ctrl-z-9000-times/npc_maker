@@ -169,6 +169,8 @@ class Individual:
             command = shlex.split(command)
         else:
             command = list(command)
+        if not command:
+            return None
         # Don't resolve the path yet in case the PWD changes.
         program = Path(command[0]) # .expanduser().resolve()
         command[0] = program
@@ -329,7 +331,7 @@ class Individual:
         """
         return self.path
 
-    def phenome(self):
+    def get_phenome(self):
         """
         Format the genome into a binary blob for the control system.
         """

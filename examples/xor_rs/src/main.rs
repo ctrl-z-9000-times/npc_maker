@@ -49,6 +49,8 @@ fn main() {
         if let Err(error) = &result {
             if error.kind() == ErrorKind::UnexpectedEof {
                 break;
+            } else {
+                panic!("{}", error);
             }
         }
         let (indiv, genome) = result.unwrap();

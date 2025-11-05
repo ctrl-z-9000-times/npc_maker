@@ -42,9 +42,10 @@ different scenarios.
 
 The "**populations**" attribute is an array of population specification objects.
 Environments can have multiple populations of simultaneously evolving
-lifeforms. The following table shows all of the expected attributes of the
-population objects. Extra attributes are simply ignored, and authors are
-encouraged to include extra information about the population.
+lifeforms, where each population manages a different type of organism. The
+following table shows all of the expected attributes of the population objects.
+Extra attributes are simply ignored, and authors are encouraged to include
+extra information about the population.
 
 | Attribute | JSON Type | Default Value | Description |
 | :-------- | :-------: | :------------ | :---------- |

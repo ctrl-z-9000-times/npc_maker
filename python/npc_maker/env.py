@@ -594,7 +594,7 @@ class Environment:
         if not controller:
             raise ValueError("missing controller")
         controller[0] = str(controller[0]) # Convert Path to String
-        phenome = individual.phenome()
+        phenome = individual.get_phenome()
         metadata = {
             "name": self.name,
             "population": population,

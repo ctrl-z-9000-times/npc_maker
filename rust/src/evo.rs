@@ -212,7 +212,7 @@ impl Individual {
         // Make paths to temporary buffer and final file locations.
         let file_name = self.file_name();
         let mut temp = std::env::temp_dir();
-        temp.push(format!("{}.tmp", file_name));
+        temp.push(format!("{file_name}.tmp"));
         path.push(file_name);
         //
         let file = File::create(&temp)?;
@@ -327,7 +327,7 @@ pub type Selection = dyn Fn(&[Arc<Mutex<Individual>>], usize) -> Vec<Vec<Arc<Mut
 /// Individuals may have custom scores functions with this type signature.
 ///
 /// By default the npc_maker will parse the individual's score field into a single
-/// floating point number, with a default of -inf for missing or invalid scores.
+/// floating point number, with a default of `-inf` for missing or invalid scores.
 pub type Score = dyn Fn(&Individual) -> f64 + Send + Sync;
 
 const DEFAULT_SCORE: f64 = f64::NEG_INFINITY;
@@ -422,24 +422,24 @@ struct EvolutionMetadata {
 }
 
 impl Evolution {
-    /// Argument path is a directory where this will save the population to.
+    /// Argument `path` is a directory where this will save the population to.
     /// If path is an empty string, a temporary directory will be created.
     ///
-    /// Argument replacement controls how new members are added once the size of
+    /// Argument `replacement` controls how new members are added once the size of
     /// the population reaches the population_size argument.
     ///
-    /// Argument selection controls which individuals are allowed to mate and
+    /// Argument `selection` controls which individuals are allowed to mate and
     /// with whom.
     ///
-    /// Argument score is an optional custom scoring function.
+    /// Argument `score` is an optional custom scoring function.
     ///
-    /// Argument population_size controls the total size of the mating
+    /// Argument `population_size` controls the total size of the mating
     /// population.
     ///
-    /// Argument leaderboard_size is the number of the best scoring individuals
+    /// Argument `leaderboard_size` is the number of the best scoring individuals
     /// to save in perpetuity. Set to zero to disable the leaderboard.
     ///
-    /// Argument hall_of_fame_size is the number of individuals from each
+    /// Argument `hall_of_fame_size` is the number of individuals from each
     /// generation to induct in to the hall of fame. Set to zero to disable the
     /// hall of fame.
     pub fn new(
@@ -537,26 +537,26 @@ impl Evolution {
             .sort_by_key(|x| x.lock().unwrap().ascension.unwrap_or(u64::MAX));
         Ok(())
     }
-    /// Get the path argument or a temporary directory.
+    /// Get the `path` argument or a temporary directory.
     pub fn get_path(&self) -> &Path {
         &self.path
     }
     fn get_metadata_path(&self) -> PathBuf {
         self.path.join("population.json")
     }
-    /// Get the replacement argument.
+    /// Get the `replacement` argument.
     pub fn get_replacement(&self) -> Replacement {
         self.replacement
     }
-    /// Get the population_size argument.
+    /// Get the `population_size` argument.
     pub fn get_population_size(&self) -> usize {
         self.population_size
     }
-    /// Get the total number of individuals added to the population.
+    /// Get the total number of individuals that have died.
     pub fn get_ascension(&self) -> u64 {
         self.ascension
     }
-    /// Get the number of cohorts of population_size that have been added.
+    /// Get the number of cohorts of `population_size` that have died.
     pub fn get_generation(&self) -> u64 {
         self.generation
     }
@@ -565,12 +565,12 @@ impl Evolution {
         &self.members
     }
     /// Get the highest scoring individuals ever recorded. This is sorted
-    /// descending by score, so that leaderboard\[0\] is the best individual.
+    /// descending by score, so that `leaderboard[0]` is the best individual.
     pub fn get_leaderboard(&self) -> &[Arc<Mutex<Individual>>] {
         &self.leaderboard
     }
     /// Get the highest scoring individuals from each generation. This is sorted
-    /// by ascension, so that hall_of_fame\[0\] is the oldest.
+    /// by ascension, so that `hall_of_fame[0]` is the oldest.
     pub fn get_hall_of_fame(&self) -> &[Arc<Mutex<Individual>>] {
         &self.hall_of_fame
     }
@@ -584,6 +584,7 @@ impl Evolution {
                 1
             };
             let members = self.get_members();
+            assert!(!members.is_empty(), "population is empty");
             self.parents.extend_from_slice(&(*self.selection)(members, num_pairs));
         }
         let mut parents = self.parents.pop().unwrap();
@@ -652,8 +653,8 @@ impl Evolution {
         Ok(())
     }
     /// Force the next generation to replace the current generation, even if the
-    /// next generation has not reached the population_size. This is useful for
-    /// seeding a population with it initial genetic material and then making
+    /// next generation has not reached the `population_size`. This is useful for
+    /// seeding a population with initial genetic material and then making
     /// the seed material immediately available by calling this method.
     pub fn rollover(&mut self) -> Result<(), Error> {
         self.rollover_leaderboard()?;

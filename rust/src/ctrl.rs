@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 
-fn _clean_path(path: impl AsRef<Path>) -> Result<PathBuf> {
+fn clean_path(path: impl AsRef<Path>) -> Result<PathBuf> {
     let path = path.as_ref();
     // Expand home directory.
     let mut path_iter = path.components();
@@ -45,17 +45,17 @@ pub struct Controller {
 }
 
 impl Controller {
-    /// Argument environment is the file path of the current environment specification file.
+    /// Argument `environment` is the file path of the current environment specification file.
     ///
-    /// Argument population is a name and a key into the environment spec's "populations" table.
+    /// Argument `population` is a name and a key into the environment spec's "populations" table.
     ///
-    /// Argument command is the command line invocation for the controller program.  
-    /// The first string in the list is the program, the remaining strings are its command line arguments.  
+    /// Argument `command` is the command line invocation for the controller program. \
+    /// The first string in the list is the program, the remaining strings are its command line arguments.
     pub fn new(environment: impl AsRef<Path>, population: &str, command: Vec<String>) -> Result<Self> {
         // Clean the arguments.
-        let environment = _clean_path(environment)?;
+        let environment = clean_path(environment)?;
         let population = population.to_string();
-        let program = _clean_path(&command[0])?;
+        let program = clean_path(&command[0])?;
         let environment_path = environment.to_str().unwrap();
         debug_assert!(!environment_path.contains('\n'));
         debug_assert!(!population.contains('\n'));
@@ -71,7 +71,7 @@ impl Controller {
         let stdout = BufReader::new(ctrl.stdout.take().unwrap());
 
         //
-        writeln!(stdin, "E{}", environment_path)?;
+        writeln!(stdin, "E{environment_path}")?;
         writeln!(stdin, "P{population}")?;
 
         Ok(Self {
@@ -84,27 +84,31 @@ impl Controller {
         })
     }
 
+    /// Get the `environment` argument.
     pub fn get_environment(&self) -> &Path {
         &self.environment
     }
 
+    /// Get the `population` argument.
     pub fn get_population(&self) -> &str {
         &self.population
     }
 
+    /// Get the `command` argument.
     pub fn get_command(&self) -> &[String] {
         &self.command
     }
 
+    /// Check if the controller process is still running.
     pub fn is_alive(&mut self) -> Result<bool> {
         let exit_status_code = self.ctrl.try_wait()?;
         Ok(exit_status_code.is_none())
     }
 
-    /// Initialize the control system with a new genome.  
-    /// This discards the currently loaded model.  
+    /// Initialize the control system with a new genome. \
+    /// This discards the currently loaded model.
     ///
-    /// Argument value must be a single line.  
+    /// Argument value must be a single line.
     pub fn genome(&mut self, value: &[u8]) -> Result<()> {
         writeln!(self.stdin, "G{}", value.len())?;
         self.stdin.write_all(value)?;
@@ -210,39 +214,44 @@ impl Message {
     /// Format this message and write it to the given stream.
     pub fn write(&self, writer: &mut impl Write) -> Result<()> {
         match self {
-            Self::Environment { environment } => writeln!(writer, "E{}", environment.to_str().unwrap())?,
-
-            Self::Population { population } => writeln!(writer, "P{population}")?,
-
+            Self::Environment { environment } => {
+                writeln!(writer, "E{}", environment.to_str().unwrap())?;
+            }
+            Self::Population { population } => {
+                writeln!(writer, "P{population}")?;
+            }
             Self::Genome { value } => {
                 writeln!(writer, "G{}", value.len())?;
-                writer.write_all(value)?
+                writer.write_all(value)?;
             }
-
-            Self::Reset => writeln!(writer, "R")?,
-
-            Self::Advance { dt } => writeln!(writer, "A{dt}")?,
-
-            Self::SetInput { gin, value } => writeln!(writer, "I{gin}\n{value}")?,
-
+            Self::Reset => {
+                writeln!(writer, "R")?;
+            }
+            Self::Advance { dt } => {
+                writeln!(writer, "A{dt}")?;
+            }
+            Self::SetInput { gin, value } => {
+                writeln!(writer, "I{gin}\n{value}")?;
+            }
             Self::SetBinary { gin, value } => {
                 writeln!(writer, "B{gin}\n{}", value.len())?;
-                writer.write_all(value)?
+                writer.write_all(value)?;
             }
-
-            Self::GetOutput { gin } => writeln!(writer, "O{gin}")?,
-
-            Self::Save => writeln!(writer, "S")?,
-
+            Self::GetOutput { gin } => {
+                writeln!(writer, "O{gin}")?;
+            }
+            Self::Save => {
+                writeln!(writer, "S")?;
+            }
             Self::Load { save_state } => {
                 writeln!(writer, "L{}", save_state.len())?;
-                writer.write_all(save_state)?
+                writer.write_all(save_state)?;
             }
-
-            Self::Custom { message_type, body } => writeln!(writer, "{}{}", message_type, body)?,
-
+            Self::Custom { message_type, body } => {
+                writeln!(writer, "{message_type}{body}")?;
+            }
             Self::Quit => {}
-        };
+        }
         Ok(())
     }
 
@@ -437,12 +446,12 @@ pub trait API {
     ///
     /// Optional, panics by default.
     fn custom(&mut self, message_type: char, message_body: &str) {
-        panic!("unsupported operation: {}", message_type)
+        panic!("unsupported operation: {message_type}")
     }
 
     /// This method is called just before the controller process exits.
     ///
-    /// Optional.
+    /// Optional, does nothing by default.
     fn quit(&mut self) {}
 }
 

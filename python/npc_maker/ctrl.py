@@ -34,6 +34,8 @@ def _clean_ctrl_command(command):
         command = shlex.split(command)
     else:
         command = list(command)
+    if not command:
+        return None
     program = Path(command[0]).expanduser().resolve()
     command[0] = program
     for index in range(1, len(command)):
