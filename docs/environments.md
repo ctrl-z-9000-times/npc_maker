@@ -51,21 +51,23 @@ extra information about the population.
 | :-------- | :-------: | :------------ | :---------- |
 | `"name"` | String | Required | Name of the population, must be unique within the environment |
 | `"description"` | String | `""` | User facing documentation message |
-| `"interfaces"` | Array of Interfaces | `[]` | Genetic interface for this agent's body |
+| `"inputs"` | Array of Interfaces | Required | Interface for this agent's body |
+| `"outputs"` | Array of Interfaces | Required | Interface for this agent's body |
 | Unspecified | Any |  | Environments may include extra information about this population |
 
-The "**interfaces**" are the connections between an agent's body
-and its control system. The interfaces attribute is an array of objects which
-each describe a single sensory input or motor output. Each interface has two
-unique identifiers: the global innovation number identifies the interface
-within the genome, and a user facing name identifies the interface within the
-environment. The following table shows all of the expected attributes of
-interface objects. Again, extra attributes are simply ignored.
+The "**interfaces**" are the connections between an agent's body in the
+environment and its control system. The inputs and outputs attributes are
+arrays of objects which each describe a single sensory input or motor output.
+Each interface has two unique identifiers: an ID number identifies the
+interface within the genome and for the controller, and a user facing name
+identifies the interface within the environment. The following table shows all
+of the expected attributes of interface objects. Again, extra attributes are
+simply ignored.
 
 | Attribute | JSON Type | Default Value | Description |
 | :-------- | :-------: | :------------ | :---------- |
-| `"gin"` | Number | Required | Global Innovation Number, must be unique within the interfaces array |
-| `"name"` | String | Required | User facing name for this port, must be unique within the interfaces array |
+| `"id"` | Number | Required | Controller facing name for this port, must be unique within its array |
+| `"name"` | String | Required | User facing name for this port, must be unique within its array |
 | `"description"` | String | `""` | User facing documentation message |
 | Unspecified | Any |  | Environments may include extra information about this interface |
 

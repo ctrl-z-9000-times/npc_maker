@@ -561,6 +561,8 @@ impl Evolution {
         self.generation
     }
     /// Get the current members of the population.
+    ///
+    /// All modifications must be saved to file using `individual.save("")`
     pub fn get_members(&self) -> &[Arc<Mutex<Individual>>] {
         &self.members
     }

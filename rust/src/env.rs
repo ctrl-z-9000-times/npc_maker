@@ -83,9 +83,11 @@ pub struct PopulationSpec {
     #[serde(default)]
     pub description: String,
 
-    /// Genetic interface for this lifeform’s body.
-    #[serde(default)]
-    pub interfaces: Vec<InterfaceSpec>,
+    /// Sensory input interfaces for this lifeform’s body.
+    pub inputs: Vec<InterfaceSpec>,
+
+    /// Motor output interfaces for this lifeform’s body.
+    pub outputs: Vec<InterfaceSpec>,
 
     /// Populations may include extra information.
     #[serde(flatten)]
@@ -95,10 +97,10 @@ pub struct PopulationSpec {
 /// Description of the interface between a body and its controller.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct InterfaceSpec {
-    /// Global Innovation Number.
-    pub gin: u64,
+    /// Identifies this interface for the controller.
+    pub id: u64,
 
-    /// User facing name for this interface.
+    /// Identifies this interface for the environment.
     pub name: String,
 
     /// User facing documentation message.

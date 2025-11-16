@@ -61,9 +61,9 @@ def Specification(env_spec_path):
         ("descr", "description"),
         ("population", "populations"),])
     # Insert default values for missing keys.
-    if "settings"    not in env_spec: env_spec["settings"]    = []
-    if "populations" not in env_spec: env_spec["populations"] = []
-    if "description" not in env_spec: env_spec["description"] = ""
+    env_spec.setdefault("settings", [])
+    env_spec.setdefault("populations", [])
+    env_spec.setdefault("description", "")
     # Check first level data types.
     assert isinstance(env_spec["name"], str)
     assert isinstance(env_spec["populations"], list)
@@ -72,31 +72,34 @@ def Specification(env_spec_path):
     # Check population objects.
     # assert len(env_spec["populations"]) > 0
     for pop in env_spec["populations"]:
-        _env_spec_check_fields(pop, ("name",))
+        _env_spec_check_fields(pop, ("name", "inputs", "outputs",))
         _alias_fields(pop, [
             ("desc", "description"),
             ("descr", "description"),])
         # Insert default values for missing keys.
-        if "interfaces"  not in pop: pop["interfaces"]  = []
-        if "description" not in pop: pop["description"] = ""
+        pop.setdefault("description", "")
         # Check the population's data types.
         assert isinstance(pop["name"], str)
-        assert isinstance(pop["interfaces"], list)
+        assert isinstance(pop["inputs"], list)
+        assert isinstance(pop["outputs"], list)
         assert isinstance(pop["description"], str)
         # Check the interface objects.
-        for interface in pop["interfaces"]:
-            _env_spec_check_fields(interface, ("gin", "name",))
+        for interface in pop["inputs"] + pop["outputs"]:
+            _env_spec_check_fields(interface, ("id", "name",))
             _alias_fields(interface, [
                 ("desc", "description"),
                 ("descr", "description"),])
-            if "description" not in interface: interface["description"] = ""
+            interface.setdefault("description", "")
             assert isinstance(interface["name"], str)
-            assert isinstance(interface["gin"], int)
+            assert isinstance(interface["id"], int)
             assert isinstance(interface["description"], str)
         # Check interface names are unique.
-        interface_names = [interface["name"] for interface in pop["interfaces"]]
-        if len(interface_names) != len(set(interface_names)):
-            raise ValueError("duplicate interface names in population specification")
+        input_names = [interface["name"] for interface in pop["inputs"]]
+        if len(input_names) != len(set(input_names)):
+            raise ValueError("duplicate input names in environment specification")
+        output_names = [interface["name"] for interface in pop["outputs"]]
+        if len(output_names) != len(set(output_names)):
+            raise ValueError("duplicate output names in environment specification")
     # Check population names are unique.
     population_names = [pop["name"] for pop in env_spec["populations"]]
     if len(population_names) != len(set(population_names)):
