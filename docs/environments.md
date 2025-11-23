@@ -97,6 +97,7 @@ The setting's "**type**" attribute must be one of the following strings or abbre
 | `"Integer"`     | `"int"`      |
 | `"Boolean"`     | `"bool"`     |
 | `"Enumeration"` | `"enum"`     |
+| `"String"`      | `"str"`      |
 
 </div>
 

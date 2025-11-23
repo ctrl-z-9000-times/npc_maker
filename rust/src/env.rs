@@ -130,7 +130,6 @@ pub enum SettingsSpec {
         /// Upper bound on the range of allowable values, inclusive.
         maximum: f64,
 
-        /// Initial value for new environments.
         default: f64,
     },
 
@@ -147,7 +146,6 @@ pub enum SettingsSpec {
         /// Upper bound on the range of allowable values, inclusive.
         maximum: i64,
 
-        /// Initial value for new environments.
         default: i64,
     },
 
@@ -158,7 +156,6 @@ pub enum SettingsSpec {
         #[serde(default)]
         description: String,
 
-        /// Initial value for new environments.
         default: bool,
     },
 
@@ -172,7 +169,16 @@ pub enum SettingsSpec {
         /// Names of all of the variants of the enumeration.
         values: Vec<String>,
 
-        /// Initial value for new environments.
+        default: String,
+    },
+
+    #[serde(alias = "str")]
+    String {
+        name: String,
+
+        #[serde(default)]
+        description: String,
+
         default: String,
     },
 }
@@ -184,7 +190,8 @@ impl SettingsSpec {
             Self::Real { name, .. }
             | Self::Integer { name, .. }
             | Self::Boolean { name, .. }
-            | Self::Enumeration { name, .. } => name,
+            | Self::Enumeration { name, .. }
+            | Self::String { name, .. } => name,
         }
     }
 
@@ -194,7 +201,8 @@ impl SettingsSpec {
             Self::Real { description, .. }
             | Self::Integer { description, .. }
             | Self::Boolean { description, .. }
-            | Self::Enumeration { description, .. } => description,
+            | Self::Enumeration { description, .. }
+            | Self::String { description, .. } => description,
         }
     }
 
@@ -205,6 +213,7 @@ impl SettingsSpec {
             Self::Integer { .. } => "Integer",
             Self::Boolean { .. } => "Boolean",
             Self::Enumeration { .. } => "Enumeration",
+            Self::String { .. } => "String",
         }
     }
 
@@ -214,6 +223,7 @@ impl SettingsSpec {
             Self::Integer { default, .. } => default.to_string(),
             Self::Boolean { default, .. } => default.to_string(),
             Self::Enumeration { default, .. } => default.to_string(),
+            Self::String { default, .. } => default.to_string(),
         }
     }
 }

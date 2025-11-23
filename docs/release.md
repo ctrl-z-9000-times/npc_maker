@@ -7,6 +7,7 @@
     * Run python test with `pytest`
     * Proof rust docs with `cargo doc --open`
     * Proof python docs with `pydoc -b npc_maker`
+    * Review system docs with `grip -b`
 
 2) Bump npc_maker version number. All language implementations will release the
 same version simultaneously.

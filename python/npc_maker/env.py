@@ -150,7 +150,8 @@ def _clean_settings(item):
     elif item["type"] == "int":   item["type"] = "Integer"
     elif item["type"] == "bool":  item["type"] = "Boolean"
     elif item["type"] == "enum":  item["type"] = "Enumeration"
-    assert item["type"] in ("Real", "Integer", "Boolean", "Enumeration")
+    elif item["type"] == "str":   item["type"] = "String"
+    assert item["type"] in ("Real", "Integer", "Boolean", "Enumeration", "String")
 
     # Clean each type variant.
     if item["type"] == "Boolean":
@@ -178,6 +179,9 @@ def _clean_settings(item):
         assert len(item["values"]) == len(set(item["values"]))
         assert item["default"] in item["values"]
 
+    elif item["type"] == "String":
+        item["default"] = str(item["default"])
+
     if len(item) > num_fields:
         name = item["name"]
         raise ValueError(
@@ -203,6 +207,8 @@ def _cast_env_settings(env_spec, settings):
                     elif value == "true":  value = True
                 settings[name] = bool(value)
             elif data_type == "Enumeration" or data_type == "enum":
+                settings[name] = str(value)
+            elif data_type == "String" or data_type == "str":
                 settings[name] = str(value)
 
 def _help_message(env_spec):
@@ -232,6 +238,7 @@ def _help_message(env_spec):
             elif item["type"] == "Integer":     line = "int  | "
             elif item["type"] == "Boolean":     line = "bool | "
             elif item["type"] == "Enumeration": line = "enum | "
+            elif item["type"] == "String":      line = "str  | "
             line += item["name"].ljust(name_field) + " | "
             line += str(item["default"]).ljust(default_field) + " | "
             if item["type"] == "Real" or item["type"] == "Integer":
