@@ -51,16 +51,16 @@ extra information about the population.
 | :-------- | :-------: | :------------ | :---------- |
 | `"name"` | String | Required | Name of the population, must be unique within the environment |
 | `"description"` | String | `""` | User facing documentation message |
-| `"inputs"` | Array of Interfaces | Required | Interface for this agent's body |
-| `"outputs"` | Array of Interfaces | Required | Interface for this agent's body |
+| `"sensors"` | Array of Interfaces | Required | Sensory inputs to this agent's body |
+| `"motors"` | Array of Interfaces | Required | Motor outputs from this agent's body |
 | Unspecified | Any |  | Environments may include extra information about this population |
 
-The "**interfaces**" are the connections between an agent's body in the
-environment and its control system. The inputs and outputs attributes are
-arrays of objects which each describe a single sensory input or motor output.
-Each interface has two unique identifiers: an ID number identifies the
-interface within the genome and for the controller, and a user facing name
-identifies the interface within the environment. The following table shows all
+The "**sensors**" and "**motors**" arrays describe the connections between an
+agent's body in the environment and its control system. Both of these
+attributes are arrays of interface objects. Each interface object has two
+unique identifiers: a name and an ID number. The ID number identifies the
+interface for the controller and within the genome; and the name identifies the
+interface to the user and within the environment. The following table shows all
 of the expected attributes of interface objects. Again, extra attributes are
 simply ignored.
 

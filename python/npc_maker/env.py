@@ -72,7 +72,7 @@ def Specification(env_spec_path):
     # Check population objects.
     # assert len(env_spec["populations"]) > 0
     for pop in env_spec["populations"]:
-        _env_spec_check_fields(pop, ("name", "inputs", "outputs",))
+        _env_spec_check_fields(pop, ("name", "sensors", "motors",))
         _alias_fields(pop, [
             ("desc", "description"),
             ("descr", "description"),])
@@ -80,11 +80,11 @@ def Specification(env_spec_path):
         pop.setdefault("description", "")
         # Check the population's data types.
         assert isinstance(pop["name"], str)
-        assert isinstance(pop["inputs"], list)
-        assert isinstance(pop["outputs"], list)
+        assert isinstance(pop["sensors"], list)
+        assert isinstance(pop["motors"], list)
         assert isinstance(pop["description"], str)
         # Check the interface objects.
-        for interface in pop["inputs"] + pop["outputs"]:
+        for interface in pop["sensors"] + pop["motors"]:
             _env_spec_check_fields(interface, ("id", "name",))
             _alias_fields(interface, [
                 ("desc", "description"),
@@ -94,12 +94,15 @@ def Specification(env_spec_path):
             assert isinstance(interface["id"], int)
             assert isinstance(interface["description"], str)
         # Check interface names are unique.
-        input_names = [interface["name"] for interface in pop["inputs"]]
-        if len(input_names) != len(set(input_names)):
-            raise ValueError("duplicate input names in environment specification")
-        output_names = [interface["name"] for interface in pop["outputs"]]
-        if len(output_names) != len(set(output_names)):
-            raise ValueError("duplicate output names in environment specification")
+        dupl            = lambda data: len(data) > len(set(data))
+        input_names     = [interface["name"] for interface in pop["sensors"]]
+        input_ids       = [interface["id"]   for interface in pop["sensors"]]
+        output_names    = [interface["name"] for interface in pop["motors"]]
+        output_ids      = [interface["id"]   for interface in pop["motors"]]
+        if dupl(input_names):  raise ValueError("duplicate sensor name in environment specification")
+        if dupl(input_ids):    raise ValueError("duplicate sensor id in environment specification")
+        if dupl(output_names): raise ValueError("duplicate motor name in environment specification")
+        if dupl(output_ids):   raise ValueError("duplicate motor id in environment specification")
     # Check population names are unique.
     population_names = [pop["name"] for pop in env_spec["populations"]]
     if len(population_names) != len(set(population_names)):

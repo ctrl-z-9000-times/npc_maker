@@ -84,12 +84,12 @@ pub struct PopulationSpec {
     pub description: String,
 
     /// Sensory input interfaces for this lifeform’s body.
-    pub inputs: Vec<InterfaceSpec>,
+    pub sensors: Vec<InterfaceSpec>,
 
     /// Motor output interfaces for this lifeform’s body.
-    pub outputs: Vec<InterfaceSpec>,
+    pub motors: Vec<InterfaceSpec>,
 
-    /// Populations may include extra information.
+    /// These objects may include extra information.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -97,7 +97,8 @@ pub struct PopulationSpec {
 /// Description of the interface between a body and its controller.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct InterfaceSpec {
-    /// Identifies this interface for the controller.
+    /// Identifies this interface for the controller. \
+    /// Must be unique within its array.
     pub id: u64,
 
     /// Identifies this interface for the environment.
@@ -107,7 +108,7 @@ pub struct InterfaceSpec {
     #[serde(default)]
     pub description: String,
 
-    /// Interfaces may include extra information.
+    /// These objects may include extra information.
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }

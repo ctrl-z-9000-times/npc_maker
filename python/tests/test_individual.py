@@ -1,6 +1,6 @@
 from npc_maker.evo import Individual, Genome
 
-class TestGenome(Genome):
+class MyGenome(Genome):
     def __init__(self, data):
         self.data = data
 
@@ -13,7 +13,7 @@ def test_name():
 def test_save_load():
     indiv1 = Individual(
         controller="test_ctrl",
-        genome= TestGenome(b"test_genome"),
+        genome=MyGenome(b"test_genome"),
         ascension=777,
         info={"test": "hello world"},
         foo="bar")
@@ -21,7 +21,7 @@ def test_save_load():
     path = indiv1.save("./")
     try:
         print(open(path, "rb").read())
-        indiv2 = Individual.load(TestGenome, path)
+        indiv2 = Individual.load(MyGenome, path)
 
         indiv1._genome = None
         assert vars(indiv1) == vars(indiv2)
