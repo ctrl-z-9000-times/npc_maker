@@ -1,3 +1,10 @@
+
+# Python
 __pycache__
+*.egg-info/
+*.so
+dist
+
+# Rust
 target
 Cargo.lock
