@@ -4,14 +4,22 @@
     "description": "String",
     "spec": "String",
     "path": "String",
-    "populations": [
+    "body_types": [
         {
             "name": "String",
             "description": "String",
-            "interfaces": [
+            "sensors": [
                 {
-                    "gin": "Number",
                     "name": "String",
+                    "id": "Number",
+                    "description": "String",
+                    "Unspecified": "Any"
+                }
+            ],
+            "motors": [
+                {
+                    "name": "String",
+                    "id": "Number",
                     "description": "String",
                     "Unspecified": "Any"
                 }

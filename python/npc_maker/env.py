@@ -45,7 +45,7 @@ def Specification(env_spec_path):
     except json.decoder.JSONDecodeError as err:
         raise ValueError(f"JSON syntax error in \"{env_spec_path}\" {err}")
     # 
-    _env_spec_check_fields(env_spec, ("name", "path", "populations",), ("spec",))
+    _env_spec_check_fields(env_spec, ("name", "path", "body_types",), ("spec",))
     # Automatically save the env_spec path into the env_spec.
     env_spec["spec"] = env_spec_path
     # Clean up the environment command line invocation.
@@ -59,32 +59,30 @@ def Specification(env_spec_path):
     _alias_fields(env_spec, [
         ("desc", "description"),
         ("descr", "description"),
-        ("population", "populations"),])
+        ("bodies", "body_types"),])
     # Insert default values for missing keys.
     env_spec.setdefault("settings", [])
-    env_spec.setdefault("populations", [])
     env_spec.setdefault("description", "")
     # Check first level data types.
     assert isinstance(env_spec["name"], str)
-    assert isinstance(env_spec["populations"], list)
+    assert isinstance(env_spec["body_types"], list)
     assert isinstance(env_spec["settings"], list)
     assert isinstance(env_spec["description"], str)
-    # Check population objects.
-    # assert len(env_spec["populations"]) > 0
-    for pop in env_spec["populations"]:
-        _env_spec_check_fields(pop, ("name", "sensors", "motors",))
-        _alias_fields(pop, [
+    # Check body_type objects.
+    for body_type in env_spec["body_types"]:
+        _env_spec_check_fields(body_type, ("name", "sensors", "motors",))
+        _alias_fields(body_type, [
             ("desc", "description"),
             ("descr", "description"),])
         # Insert default values for missing keys.
-        pop.setdefault("description", "")
-        # Check the population's data types.
-        assert isinstance(pop["name"], str)
-        assert isinstance(pop["sensors"], list)
-        assert isinstance(pop["motors"], list)
-        assert isinstance(pop["description"], str)
+        body_type.setdefault("description", "")
+        # Check the body_type's data types.
+        assert isinstance(body_type["name"], str)
+        assert isinstance(body_type["sensors"], list)
+        assert isinstance(body_type["motors"], list)
+        assert isinstance(body_type["description"], str)
         # Check the interface objects.
-        for interface in pop["sensors"] + pop["motors"]:
+        for interface in body_type["sensors"] + body_type["motors"]:
             _env_spec_check_fields(interface, ("id", "name",))
             _alias_fields(interface, [
                 ("desc", "description"),
@@ -95,18 +93,18 @@ def Specification(env_spec_path):
             assert isinstance(interface["description"], str)
         # Check interface names are unique.
         dupl            = lambda data: len(data) > len(set(data))
-        input_names     = [interface["name"] for interface in pop["sensors"]]
-        input_ids       = [interface["id"]   for interface in pop["sensors"]]
-        output_names    = [interface["name"] for interface in pop["motors"]]
-        output_ids      = [interface["id"]   for interface in pop["motors"]]
+        input_names     = [interface["name"] for interface in body_type["sensors"]]
+        input_ids       = [interface["id"]   for interface in body_type["sensors"]]
+        output_names    = [interface["name"] for interface in body_type["motors"]]
+        output_ids      = [interface["id"]   for interface in body_type["motors"]]
         if dupl(input_names):  raise ValueError("duplicate sensor name in environment specification")
         if dupl(input_ids):    raise ValueError("duplicate sensor id in environment specification")
         if dupl(output_names): raise ValueError("duplicate motor name in environment specification")
         if dupl(output_ids):   raise ValueError("duplicate motor id in environment specification")
-    # Check population names are unique.
-    population_names = [pop["name"] for pop in env_spec["populations"]]
-    if len(population_names) != len(set(population_names)):
-        raise ValueError("duplicate population name in environment specification")
+    # Check body_type names are unique.
+    body_names = [body_type["name"] for body_type in env_spec["body_types"]]
+    if len(body_names) != len(set(body_names)):
+        raise ValueError("duplicate body type name in environment specification")
     # Check settings objects.
     for item in env_spec["settings"]:
         _clean_settings(item)

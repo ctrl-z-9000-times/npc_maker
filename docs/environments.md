@@ -30,7 +30,7 @@ the object.
 | `"name"`   | String | Required | Name of the environment, should be universally unique |
 | `"path"`   | String | Required | Filesystem path of the environment's executable program, relative to this file |
 | `"spec"`   | String | Automatic | Filesystem path of the environment specification (this file) |
-| `"populations"` | Array of Populations | `[]` | Specification for each population |
+| `"body_types"` | Array of BodySpecs | Required | Specification for each type of organism |
 | `"settings"` | Array of Settings | `[]` | Settings menu items for customizing the environment |
 | `"description"` | String | `""` | User facing documentation message |
 | Unspecified | Any |  | Environments may include extra information |
@@ -40,12 +40,12 @@ this file. This file is given to the environment program as a command line
 argument, which allows one environment program to be reconfigured for multiple
 different scenarios.
 
-The "**populations**" attribute is an array of population specification objects.
-Environments can have multiple populations of simultaneously evolving
-lifeforms, where each population manages a different type of organism. The
-following table shows all of the expected attributes of the population objects.
-Extra attributes are simply ignored, and authors are encouraged to include
-extra information about the population.
+The "**body_types**" attribute is an array of body specification objects, which
+each describe the interface between this environment and a type of organism.
+Environments may contain multiple body types. The following table shows all of
+the expected attributes of body specification objects. Extra attributes are
+simply ignored, and authors are encouraged to include extra information about
+body types here.
 
 | Attribute | JSON Type | Default Value | Description |
 | :-------- | :-------: | :------------ | :---------- |

@@ -39,9 +39,8 @@ pub struct EnvironmentSpec {
     #[serde(default)]
     pub description: String,
 
-    /// Specification for each population.
-    #[serde(default)]
-    pub populations: Vec<PopulationSpec>,
+    /// Specification for each type of organism.
+    pub body_types: Vec<BodySpec>,
 
     /// Settings menu items for the user to customize the environment.
     #[serde(default)]
@@ -75,8 +74,8 @@ impl EnvironmentSpec {
 
 /// Description for each type of organism within an environment.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct PopulationSpec {
-    /// Name of the population, must be unique within the environment.
+pub struct BodySpec {
+    /// Name of the body type, must be unique within the environment.
     pub name: String,
 
     /// User facing documentation message.
@@ -622,8 +621,8 @@ impl Environment {
         match &mut message {
             JsonMessage::Spawn { population } => {
                 if population.is_empty() {
-                    if self.env_spec.populations.len() == 1 {
-                        *population = self.env_spec.populations[0].name.to_string();
+                    if self.env_spec.body_types.len() == 1 {
+                        *population = self.env_spec.body_types[0].name.to_string();
                     } else {
                         panic!("missing population");
                     }
@@ -643,7 +642,7 @@ impl Environment {
         // Check for missing/invalid names.
         match &message {
             JsonMessage::Spawn { population } => {
-                assert!(self.env_spec.populations.iter().any(|pop| &pop.name == population));
+                assert!(self.env_spec.body_types.iter().any(|pop| &pop.name == population));
             }
             JsonMessage::Mate { parents } => {
                 assert!(self.outstanding.contains_key(&parents[0]));
